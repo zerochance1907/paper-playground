@@ -1,0 +1,44 @@
+{
+  "arxiv": "1406.2661",
+  "title": "Generative Adversarial Networks",
+  "authors": [
+    "Ian J. Goodfellow",
+    "Jean Pouget-Abadie",
+    "Mehdi Mirza",
+    "Bing Xu",
+    "David Warde-Farley",
+    "Sherjil Ozair",
+    "Aaron Courville",
+    "Yoshua Bengio"
+  ],
+  "year": 2014,
+  "url": "https://arxiv.org/abs/1406.2661",
+  "one_liner": "Drag the real data's peaks and watch a live generator chase them while a discriminator judges.",
+  "tags": [
+    "generative"
+  ],
+  "difficulty": "beginner",
+  "interaction": [
+    {
+      "action": "select",
+      "selector": "#preset",
+      "value": "two"
+    },
+    {
+      "action": "drag",
+      "selector": "#gan",
+      "from": [
+        0.62,
+        0.4
+      ],
+      "to": [
+        0.8,
+        0.4
+      ]
+    },
+    {
+      "action": "wait",
+      "ms": 1500
+    }
+  ]
+}
