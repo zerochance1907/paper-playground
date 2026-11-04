@@ -1,0 +1,86 @@
+name: Build a paper demo
+
+# Runs only when a maintainer adds the `build-paper` label to a paper request
+# (labeling needs write access, so strangers can't spend the API budget), or when
+# started by hand from the Actions tab with an arXiv link.
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      arxiv:
+        description: arXiv URL or id
+        required: true
+      idea:
+        description: Optional hint for what the demo should show
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+
+concurrency:
+  group: add-paper-${{ github.event.issue.number || github.run_id }}
+
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'build-paper'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci && npx playwright install --with-deps chromium
+
+      - name: Read the request
+        id: req
+        env:
+          BODY: ${{ github.event.issue.body }}
+          INPUT_ARXIV: ${{ inputs.arxiv }}
+          INPUT_IDEA: ${{ inputs.idea }}
+        run: |
+          src="${INPUT_ARXIV:-$BODY}"
+          id=$(printf '%s' "$src" | grep -oE '[0-9]{4}\.[0-9]{4,5}' | head -1)
+          if [ -z "$id" ]; then echo "No arXiv id found" >&2; exit 1; fi
+          echo "arxiv=$id" >> "$GITHUB_OUTPUT"
+          idea="${INPUT_IDEA:-$(printf '%s' "$BODY" | sed -n '/What should the demo show/,$p' | tail -n +3)}"
+          { echo "idea<<EOF"; printf '%s\n' "$idea"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          # Set ONE of these repository secrets (Settings → Secrets → Actions):
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: "--max-turns 120"
+          prompt: |
+            Add the paper arXiv:${{ steps.req.outputs.arxiv }} to this repo, following CLAUDE.md exactly.
+            Start with: node scripts/new-paper.mjs ${{ steps.req.outputs.arxiv }}
+            Requester's hint (optional): ${{ steps.req.outputs.idea }}
+            Finish only when `node scripts/check.mjs <slug>` passes and you have looked at thumb.png.
+            Only change files inside papers/<slug>/. Do not commit; the workflow opens the pull request.
+
+      - name: Verify in a real browser
+        run: |
+          slug=$(git status --porcelain papers | grep -oE 'papers/[^/]+' | sed 's#papers/##' | sort -u | head -1)
+          test -n "$slug" || { echo "the agent did not add a paper" >&2; exit 1; }
+          echo "SLUG=$slug" >> "$GITHUB_ENV"
+          node scripts/check.mjs "$slug"
+
+      - uses: peter-evans/create-pull-request@v7
+        with:
+          branch: paper/${{ env.SLUG }}
+          title: "Add paper demo: ${{ env.SLUG }}"
+          commit-message: "Add paper demo: ${{ env.SLUG }}"
+          add-paths: papers/${{ env.SLUG }}/**
+          body: |
+            Interactive demo for arXiv:${{ steps.req.outputs.arxiv }}, built by Claude Code and passing `scripts/check.mjs` in a real browser.
+            ${{ github.event.issue.number && format('Closes #{0}', github.event.issue.number) || '' }}
+
+            Please play with the demo before merging: check the core idea is correct and the "simplifications" section is honest.
+
+            🤖 Generated with [Claude Code](https://claude.com/claude-code)

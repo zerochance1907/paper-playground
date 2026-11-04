@@ -1,0 +1,15 @@
+{
+  "name": "paper-playground",
+  "private": true,
+  "type": "module",
+  "description": "Research papers turned into small interactive browser demos.",
+  "scripts": {
+    "check": "node scripts/check.mjs",
+    "build": "node scripts/build.mjs",
+    "new": "node scripts/new-paper.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.48.2"
+  },
+  "license": "MIT"
+}

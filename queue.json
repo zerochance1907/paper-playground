@@ -1,0 +1,18 @@
+{
+  "_about": "Papers waiting to be built. Agents: pick yours by batch, follow CLAUDE.md, and remove nothing from this file.",
+  "papers": [
+    { "batch": "A", "arxiv": "1512.03385", "slug": "resnet", "hint": "Train a deep plain net vs the same net with skip connections live (tiny MLP in JS on a 2D toy task); show the deep plain net's loss stalling while the residual one trains, plus gradient size per layer." },
+    { "batch": "A", "arxiv": "1207.0580", "slug": "dropout", "hint": "Fit a small net to a few noisy 2D points with and without dropout; watch the overfit decision boundary vs the smoother one, and see random neurons switch off each step." },
+    { "batch": "A", "arxiv": "1412.6980", "slug": "adam", "hint": "Race SGD, momentum, RMSProp and Adam on a 2D loss surface the visitor can pick (ravine, saddle, noisy); click to set the start point; show trajectories and the per-parameter step sizes Adam adapts." },
+    { "batch": "A", "arxiv": "1301.3781", "slug": "word2vec", "hint": "Train skip-gram on a tiny built-in corpus in the browser; show 2D projected word vectors moving as training runs, and let the visitor try analogies like king - man + woman." },
+
+    { "batch": "B", "arxiv": "1406.2661", "slug": "gans", "hint": "1D or 2D GAN training live: generator samples vs real data distribution, discriminator's decision curve; visitor can change the real distribution and watch the generator chase it (and see mode collapse)." },
+    { "batch": "B", "arxiv": "2006.11239", "slug": "ddpm", "hint": "2D point-cloud diffusion: visitor draws a shape, forward process noises it step by step, a small pre-computed or live-trained denoiser reverses it; scrub the timestep slider." },
+    { "batch": "B", "arxiv": "2404.19756", "slug": "kan", "hint": "Compare an MLP (fixed activations on nodes) with a KAN (learnable splines on edges) fitting a 1D/2D function; show each edge's learned spline and let visitor drag spline control points." },
+    { "batch": "B", "arxiv": "2312.00752", "slug": "mamba", "hint": "Selective state space: a sequence scrolls past a hidden state; toggle selectivity on/off and see how input-dependent gating lets the model keep or forget tokens on a copying / selective-recall task." },
+
+    { "batch": "C", "arxiv": "1707.06347", "slug": "ppo", "hint": "A tiny policy on a 1D/2D task; show the probability ratio and the clipped objective; slider for epsilon; compare clipped vs unclipped updates exploding on the same batch." },
+    { "batch": "C", "arxiv": "2003.08934", "slug": "nerf", "hint": "2D 'flatland' NeRF: render a 1D image from a 2D scene by marching rays through a density/color field; visitor moves the camera and sees volume rendering accumulate along each ray; optionally fit a tiny field to a few views." },
+    { "batch": "C", "arxiv": "2303.04137", "slug": "diffusion-policy", "hint": "A 2D robot end-effector must push a block around an obstacle where demos go left OR right; show that a regression (mean) policy averages into the obstacle while a diffusion policy samples one valid mode." }
+  ]
+}

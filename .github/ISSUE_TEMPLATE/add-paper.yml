@@ -1,0 +1,22 @@
+name: Request a paper
+description: Suggest a paper to turn into an interactive demo
+title: "Add paper: "
+labels: ["paper-request"]
+body:
+  - type: input
+    id: arxiv
+    attributes:
+      label: arXiv link
+      description: The paper's arXiv URL or id (e.g. https://arxiv.org/abs/1706.03762)
+      placeholder: https://arxiv.org/abs/...
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What should the demo show? (optional)
+      description: The one idea you'd want someone to "get" by playing with it.
+  - type: markdown
+    attributes:
+      value: |
+        A maintainer adds the `build-paper` label to queue it. An agent then reads the paper, builds the demo, checks it in a real browser, and opens a pull request for review.
