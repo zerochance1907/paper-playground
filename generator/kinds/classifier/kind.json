@@ -1,0 +1,26 @@
+{
+  "summary": "Two small neural networks train live, side by side, on a 2D toy dataset: a baseline, and one with a single change (dropout, weight decay, residual connections, more depth, or ReLU instead of tanh). The visitor sees both decision boundaries plus train and test loss.",
+  "use_for": "network architectures, regularization, overfitting, generalization, skip connections, depth, activations, normalization, image classification, supervised learning",
+  "keywords": ["dropout", "regulariz", "overfit", "generaliz", "residual", "skip connection", "deep network", "depth", "activation", "relu", "classif", "convolution", "cnn", "image", "imagenet", "weight decay", "normaliz", "supervised"],
+  "tags": ["architectures"],
+  "config": {
+    "technique": { "enum": ["dropout", "weight-decay", "residual", "depth", "relu"], "default": "depth", "help": "the single change the second network gets; pick the one closest to the paper's idea" },
+    "dataset": { "enum": ["spiral", "moons", "circles", "xor"], "default": "spiral", "help": "starting 2D dataset" }
+  },
+  "one_liner": "Train two tiny networks live, one with the paper's twist, and compare their decision boundaries.",
+  "mechanism": "The demo trains two small networks on the same 2D points at the same time. They are identical except for one change, so any difference in the boundaries they learn, or in how their training and test losses move, comes from that change alone.",
+  "try": [
+    "Watch the two decision boundaries form, and compare <strong>train</strong> loss (solid) with <strong>test</strong> loss (dashed). When train loss keeps falling but test loss rises, the network is memorising noise.",
+    "Switch the <strong>dataset</strong> to Spiral, the hardest one, and see which network untangles it first.",
+    "Drag <strong>label noise</strong> up. Noisy labels are where overfitting shows, and where regularisers earn their keep.",
+    "Press <strong>New random init</strong> a few times. A difference that holds across several initialisations is real, not luck."
+  ],
+  "simplifications": [
+    "Both networks are tiny multilayer perceptrons on 2D points, trained with full-batch Adam in your browser. The paper's experiments use real datasets and far larger models.",
+    "The networks differ in exactly one feature so the comparison is fair. Real systems combine many such choices, and their effects interact."
+  ],
+  "interaction": [
+    { "action": "select", "selector": "#dataset", "value": "circles" },
+    { "action": "wait", "ms": 1500 }
+  ]
+}

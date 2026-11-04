@@ -19,4 +19,4 @@ body:
   - type: markdown
     attributes:
       value: |
-        A maintainer adds the `build-paper` label to queue it. An agent then reads the paper, builds the demo, checks it in a real browser, and opens a pull request for review.
+        A maintainer adds the `build-paper` label (a Claude agent builds a custom demo) or `generate-free` (the free generator picks a demo engine). Either way the demo is checked in a real browser and opened as a pull request for review.

@@ -6,7 +6,8 @@
   "scripts": {
     "check": "node scripts/check.mjs",
     "build": "node scripts/build.mjs",
-    "new": "node scripts/new-paper.mjs"
+    "new": "node scripts/new-paper.mjs",
+    "generate": "node scripts/generate.mjs"
   },
   "devDependencies": {
     "playwright": "1.48.2"

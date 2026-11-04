@@ -1,0 +1,35 @@
+<style>
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .pair figure { margin: 0; }
+  .pair figcaption { font-size: 13px; margin-bottom: 4px; font-weight: 600; }
+  .pair canvas { width: 100%; border-radius: 8px; }
+  select { font: inherit; font-size: 14px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+  .stats { font-family: var(--mono); font-size: 12px; line-height: 1.7; margin-top: 8px; }
+</style>
+<div class="demo-grid">
+  <div class="panel">
+    <h3>1 · Same data, same training, one difference</h3>
+    <div class="pair">
+      <figure><figcaption id="name-a">Baseline</figcaption><canvas id="map-a" aria-label="Decision boundary of the baseline network over the 2D data points."></canvas></figure>
+      <figure><figcaption id="name-b">With the change</figcaption><canvas id="map-b" aria-label="Decision boundary of the modified network over the same data points."></canvas></figure>
+    </div>
+    <div class="controls">
+      <label>Dataset
+        <select id="dataset">
+          <option value="spiral">Spiral</option>
+          <option value="moons">Two moons</option>
+          <option value="circles">Circles</option>
+          <option value="xor">XOR</option>
+        </select>
+      </label>
+      <label>Label noise <input type="range" id="noise" min="0" max="0.3" step="0.05" value="0.1"></label>
+      <button class="btn" id="pause" type="button">❚❚ Pause</button>
+      <button class="btn" id="reinit" type="button">↺ New random init</button>
+    </div>
+  </div>
+  <div class="panel">
+    <h3>Loss · solid = train, dashed = test</h3>
+    <canvas id="loss" aria-label="Training and test loss of both networks over training steps."></canvas>
+    <div class="stats" id="stats"></div>
+  </div>
+</div>
