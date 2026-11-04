@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Adam · Paper → Playground</title>
+  <meta name="description" content="Race SGD, momentum, RMSProp and Adam across a loss surface, then rescale the gradients and see which one doesn't care.">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="../_shared/demo.css">
+  <script type="module" src="../_shared/demo.js"></script>
+  <style>
+    .opt-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; margin-top: 8px; }
+    .opt-legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .opt-legend i { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+    .steps { display: grid; grid-template-columns: 78px 1fr 1fr; gap: 6px 8px; align-items: center; font-size: 13px; }
+    .steps .hd { color: var(--muted); font-size: 12px; }
+    .steps .track { background: var(--surface); height: 14px; border-radius: 4px; overflow: hidden; position: relative; }
+    .steps .fill { height: 100%; }
+    .steps .val { position: absolute; right: 4px; top: -1px; font-family: var(--mono); font-size: 10px; color: var(--muted); }
+    select { font: inherit; font-size: 14px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+    .eq { font-family: var(--mono); font-size: 12px; color: var(--muted); margin: 8px 0 0; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <header data-paper-header></header>
+  <main>
+    <section id="demo" aria-label="Interactive optimizer race">
+      <div class="demo-grid">
+        <div class="panel">
+          <h3>1 · Four optimizers race downhill · tap the map to pick a start</h3>
+          <canvas id="surface" aria-label="Contour map of a 2D loss surface, darker means lower loss. Four coloured trails show the paths taken by SGD, momentum, RMSProp and Adam from the chosen start point; a cross marks the minimum."></canvas>
+          <div class="opt-legend" id="legend"></div>
+          <div class="controls">
+            <label>Surface
+              <select id="surface-select">
+                <option value="ravine">Ravine (steep in y, flat in x)</option>
+                <option value="saddle">Saddle (nearly flat start)</option>
+                <option value="noisy">Noisy bowl (minibatch noise)</option>
+              </select>
+            </label>
+            <label>Gradient scale <input type="range" id="scale" min="-2" max="2" step="1" value="0"></label>
+            <span class="readout" id="scale-readout"></span>
+            <button class="btn" id="bias" type="button" aria-pressed="true">Adam bias correction</button>
+            <button class="btn" id="replay" type="button">↺ Replay</button>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>Loss above the minimum (log scale)</h3>
+          <canvas id="loss" aria-label="Loss minus the minimum loss over steps, log scale, one line per optimizer."></canvas>
+          <h3 style="margin-top:12px">Learning rate each parameter actually gets (log scale)</h3>
+          <div class="steps" id="steps"></div>
+          <p class="eq" id="adam-readout"></p>
+        </div>
+      </div>
+    </section>
+
+    <section id="explainer">
+      <h2>The idea in 60 seconds</h2>
+      <p>Training a network means walking downhill on a loss surface with millions of directions.
+        Plain gradient descent (SGD) steps by <em>learning rate × gradient</em>. That's a problem
+        when some directions are steep and others nearly flat: a learning rate small enough for
+        the steep direction makes progress in the flat one painfully slow.</p>
+      <p>Adam keeps two running averages <strong>for every parameter separately</strong>: the
+        average gradient <code>m</code> (like momentum, it smooths out noise) and the average
+        <em>squared</em> gradient <code>v</code> (how big the gradients usually are). Each step is
+        <code>α · m / √v</code>. Dividing by √v cancels out the scale: a parameter with tiny,
+        consistent gradients takes the same-sized steps as one with huge gradients. Steps are
+        roughly α at most, whatever the gradients look like.</p>
+      <p>That makes Adam <strong>invariant to rescaling the gradient</strong>: multiply the loss by
+        100 and SGD blows up; multiply by 0.01 and SGD freezes. Adam's path doesn't change. When
+        gradients are noisy, m shrinks relative to √v, so Adam automatically takes smaller,
+        more careful steps near the bottom.</p>
+      <p>Both averages start at zero, so early on they are biased towards zero. The paper fixes this
+        with <strong>bias correction</strong>: divide m by (1 − β₁ᵗ) and v by (1 − β₂ᵗ). This idea,
+        on top of RMSProp's √v scaling and momentum's averaging, is a big part of why Adam works
+        with its default settings on so many problems.</p>
+      <div class="try">
+        <h3>Try this</h3>
+        <ul>
+          <li>On the <strong>Ravine</strong>, watch SGD drop to the valley floor and then crawl sideways, while Adam heads more directly to the minimum. The learning-rate panel shows why: SGD gives x and y the same rate, Adam gives the flat x direction a much bigger one.</li>
+          <li>Slide <strong>Gradient scale</strong> to ×100: SGD and momentum diverge. Slide to ×0.01: they barely move. Adam traces the same path every time, because its per-parameter rates shrink or grow by exactly the opposite factor.</li>
+          <li>Switch to the <strong>Saddle</strong>. Starting almost exactly on the ridge, SGD hardly feels the slope sideways and stalls. Adam rescales the tiny gradient and rolls off.</li>
+          <li>Turn off <strong>bias correction</strong>. While v is still close to its zero starting value, Adam's early steps come out several times too big, and its path overshoots. Switch it back on to see the paper's fix.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="simplifications">
+      <h2>How this demo simplifies the paper</h2>
+      <ul>
+        <li>The "model" has two parameters, and the loss surfaces are simple formulas chosen by hand. The paper's experiments train logistic regression, multilayer nets and convolutional nets on MNIST, IMDB reviews and CIFAR-10.</li>
+        <li>Adam uses the paper's defaults β₁ = 0.9, β₂ = 0.999, ε = 10⁻⁸, but a learning rate α = 0.05 instead of 0.001 so that paths are visible within a few hundred steps. Each competitor uses one fixed learning rate on every surface, chosen by hand. A tuned SGD could do better on any single surface, but its best learning rate changes when the gradient scale changes. Adam's mostly doesn't, which is the point.</li>
+        <li>The ravine is aligned with the axes. Adam scales each parameter separately, so it helps most when steep and flat directions line up with individual parameters. On a diagonal ravine its advantage is smaller.</li>
+        <li>"Noisy bowl" adds Gaussian noise to every gradient to imitate minibatch noise. Real minibatch noise has more structure.</li>
+        <li>The paper also proposes AdaMax and analyses convergence with regret bounds. Those parts are not shown here.</li>
+      </ul>
+    </section>
+  </main>
+
+  <script type="module">
+    // ---------- loss surfaces: f(x, y) and its gradient ----------
+    const SURFACES = {
+      ravine: {
+        f: (x, y) => 0.05 * x * x + 2 * y * y,
+        g: (x, y) => [0.1 * x, 4 * y],
+        min: [0, 0], fmin: 0, start: [-2.6, 1.5], noise: 0,
+      },
+      saddle: {
+        f: (x, y) => 0.5 * x * x - 0.05 * y * y + 0.0125 * y ** 4,
+        g: (x, y) => [x, -0.1 * y + 0.05 * y ** 3],
+        min: [0, Math.SQRT2], min2: [0, -Math.SQRT2], fmin: -0.05, start: [-2.6, 0.02], noise: 0,
+      },
+      noisy: {
+        f: (x, y) => 0.25 * x * x + 0.5 * y * y,
+        g: (x, y) => [0.5 * x, y],
+        min: [0, 0], fmin: 0, start: [-2.5, 1.6], noise: 0.6,
+      },
+    };
+    const XR = 3, YR = 2; // visible domain [-3,3] x [-2,2]
+    const STEPS = 300, PER_FRAME = 2;
+
+    // ---------- optimizers (paper notation for Adam) ----------
+    const OPTS = [
+      { name: "SGD", color: "--muted", lr: 0.1,
+        init: () => ({}), step: (s, g, lr) => g.map((gi) => -lr * gi) },
+      { name: "Momentum", color: "--accent-2", lr: 0.05,
+        init: () => ({ v: [0, 0] }), step: (s, g, lr) => g.map((gi, i) => (s.v[i] = 0.9 * s.v[i] - lr * gi)) },
+      { name: "RMSProp", color: "--good", lr: 0.05,
+        init: () => ({ r: [0, 0] }),
+        step: (s, g, lr) => g.map((gi, i) => { s.r[i] = 0.9 * s.r[i] + 0.1 * gi * gi; return -lr * gi / (Math.sqrt(s.r[i]) + 1e-8); }) },
+      { name: "Adam", color: "--accent", lr: 0.05,
+        init: () => ({ m: [0, 0], v: [0, 0], t: 0 }),
+        step: (s, g, lr) => {
+          const b1 = 0.9, b2 = 0.999, eps = 1e-8; s.t++;
+          return g.map((gi, i) => {
+            s.m[i] = b1 * s.m[i] + (1 - b1) * gi;          // 1st moment (mean of gradients)
+            s.v[i] = b2 * s.v[i] + (1 - b2) * gi * gi;     // 2nd moment (mean of squared gradients)
+            const mh = biasCorrection ? s.m[i] / (1 - b1 ** s.t) : s.m[i];
+            const vh = biasCorrection ? s.v[i] / (1 - b2 ** s.t) : s.v[i];
+            s.effLr = s.effLr || [0, 0]; s.effLr[i] = lr / (Math.sqrt(vh) + eps);
+            return -lr * mh / (Math.sqrt(vh) + eps);
+          });
+        } },
+    ];
+
+    let surfKey = "ravine", scale = 1, biasCorrection = true, start = [...SURFACES.ravine.start];
+    let runs = [], t = 0, raf = 0, noiseSeed = 1;
+    const rand = () => { noiseSeed = (noiseSeed * 1664525 + 1013904223) >>> 0; return noiseSeed / 2 ** 32; };
+    const gauss = () => Math.sqrt(-2 * Math.log(1 - rand())) * Math.cos(2 * Math.PI * rand());
+
+    function reset() {
+      const S = SURFACES[surfKey];
+      noiseSeed = 12345; // same noise sequence every replay, so changes are due to your settings
+      runs = OPTS.map((o) => ({ o, s: o.init(), p: [...start], path: [[...start]], loss: [S.f(...start) - S.fmin], steps: [], dead: false }));
+      t = 0;
+      cancelAnimationFrame(raf); raf = requestAnimationFrame(tick);
+    }
+
+    function stepAll() {
+      const S = SURFACES[surfKey];
+      // every optimizer sees the same noisy gradient at its own point
+      const n = [gauss() * S.noise, gauss() * S.noise];
+      for (const r of runs) {
+        if (r.dead) continue;
+        const g0 = S.g(...r.p), g = [scale * (g0[0] + n[0]), scale * (g0[1] + n[1])];
+        const d = r.o.step(r.s, g, r.o.lr);
+        r.p = [r.p[0] + d[0], r.p[1] + d[1]];
+        r.steps.push([Math.abs(d[0]), Math.abs(d[1])]);
+        if (!r.p.every(Number.isFinite) || Math.abs(r.p[0]) > 50 || Math.abs(r.p[1]) > 50) { r.dead = true; }
+        r.path.push([...r.p]);
+        r.loss.push(r.dead ? Infinity : S.f(...r.p) - S.fmin);
+      }
+      t++;
+    }
+
+    function tick() {
+      for (let k = 0; k < PER_FRAME && t < STEPS; k++) stepAll();
+      draw();
+      if (t < STEPS) raf = requestAnimationFrame(tick);
+    }
+
+    // ---------- drawing ----------
+    const cv = document.getElementById("surface"), lcv = document.getElementById("loss");
+    let ctx, W, H, lctx, LW, LH, bg = null;
+    const c = (n) => Demo.color(n);
+    const toPx = ([x, y]) => [((x + XR) / (2 * XR)) * W, ((YR - y) / (2 * YR)) * H];
+    const toWorld = (px, py) => [(px / W) * 2 * XR - XR, YR - (py / H) * 2 * YR];
+    const hex = (s) => { s = s.replace("#", ""); if (s.length === 3) s = [...s].map((ch) => ch + ch).join(""); const v = parseInt(s, 16); return [v >> 16 & 255, v >> 8 & 255, v & 255]; };
+
+    function resize() {
+      W = Math.max(260, cv.parentElement.clientWidth - 24); H = Math.round(W * (2 * YR) / (2 * XR));
+      ctx = Demo.hiDPI(cv, W, H);
+      LW = Math.max(220, lcv.parentElement.clientWidth - 24); LH = Math.round(Math.min(170, LW * 0.45));
+      lctx = Demo.hiDPI(lcv, LW, LH);
+      bg = null; draw();
+    }
+
+    function renderBackground() {
+      const S = SURFACES[surfKey], dpr = cv.width / W;
+      const off = document.createElement("canvas"); off.width = Math.round(W); off.height = Math.round(H);
+      const o = off.getContext("2d"), img = o.createImageData(off.width, off.height);
+      const lo = hex(c("--surface")), hi = hex(c("--accent-2")), line = hex(c("--text"));
+      for (let py = 0; py < off.height; py++) for (let px = 0; px < off.width; px++) {
+        const [x, y] = toWorld(px + 0.5, py + 0.5);
+        const lv = Math.log10(S.f(x, y) - S.fmin + 1e-3);    // about -3 .. 1
+        const u = Math.max(0, Math.min(1, (lv + 3) / 4.2));  // 0 = low loss
+        const band = Math.abs(((lv * 3) % 1 + 1) % 1 - 0.5) < 0.04; // contour lines
+        const k = 0.75 * (1 - u);
+        let col = lo.map((v, i) => v + (hi[i] - v) * k);
+        if (band) col = col.map((v, i) => v + (line[i] - v) * 0.18);
+        const j = 4 * (py * off.width + px);
+        img.data[j] = col[0]; img.data[j + 1] = col[1]; img.data[j + 2] = col[2]; img.data[j + 3] = 255;
+      }
+      o.putImageData(img, 0, 0);
+      bg = off;
+    }
+
+    function draw() {
+      if (!ctx) return;
+      if (!bg) renderBackground();
+      const S = SURFACES[surfKey];
+      ctx.clearRect(0, 0, W, H);
+      ctx.drawImage(bg, 0, 0, W, H);
+      // minimum marker(s)
+      ctx.strokeStyle = c("--text"); ctx.lineWidth = 2;
+      for (const m of [S.min, S.min2].filter(Boolean)) {
+        const [mx, my] = toPx(m);
+        ctx.beginPath(); ctx.moveTo(mx - 6, my - 6); ctx.lineTo(mx + 6, my + 6); ctx.moveTo(mx + 6, my - 6); ctx.lineTo(mx - 6, my + 6); ctx.stroke();
+      }
+      // start
+      const [sx, sy] = toPx(start);
+      ctx.beginPath(); ctx.arc(sx, sy, 6, 0, Math.PI * 2); ctx.fillStyle = c("--surface"); ctx.fill(); ctx.stroke();
+      // trails
+      for (const r of runs) {
+        const col = c(r.o.color);
+        ctx.strokeStyle = col; ctx.lineWidth = r.o.name === "Adam" ? 3 : 2; ctx.globalAlpha = 0.9;
+        ctx.beginPath();
+        r.path.forEach((p, i) => {
+          const [x, y] = toPx([Math.max(-XR * 3, Math.min(XR * 3, p[0])), Math.max(-YR * 3, Math.min(YR * 3, p[1]))]);
+          i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+        });
+        ctx.stroke(); ctx.globalAlpha = 1;
+        if (!r.dead) {
+          const [x, y] = toPx(r.p);
+          ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fillStyle = col; ctx.fill();
+        }
+      }
+      ctx.fillStyle = c("--text"); ctx.font = "12px system-ui";
+      ctx.fillText(`step ${t}/${STEPS}`, 8, 16);
+      drawLoss(); renderSteps();
+    }
+
+    function drawLoss() {
+      const g = lctx; g.clearRect(0, 0, LW, LH);
+      const padL = 34, padB = 14, w = LW - padL - 6, h = LH - padB - 6, lo = -6, hi = 1.5;
+      g.strokeStyle = c("--border"); g.fillStyle = c("--muted"); g.font = "11px system-ui"; g.lineWidth = 1;
+      for (const v of [-6, -4, -2, 0]) {
+        const y = 6 + h * (1 - (v - lo) / (hi - lo));
+        g.beginPath(); g.moveTo(padL, y); g.lineTo(padL + w, y); g.stroke();
+        g.fillText(`1e${v}`, 2, y + 4);
+      }
+      g.fillText("steps →", padL + w - 44, LH - 2);
+      for (const r of runs) {
+        g.strokeStyle = c(r.o.color); g.lineWidth = r.o.name === "Adam" ? 2.5 : 1.8; g.beginPath();
+        let started = false;
+        r.loss.forEach((v, i) => {
+          if (!Number.isFinite(v)) return;
+          const lv = Math.max(lo, Math.min(hi, Math.log10(Math.max(v, 1e-12))));
+          const x = padL + (i / STEPS) * w, y = 6 + h * (1 - (lv - lo) / (hi - lo));
+          started ? g.lineTo(x, y) : g.moveTo(x, y); started = true;
+        });
+        g.stroke();
+      }
+    }
+
+    // The learning rate each parameter actually gets, i.e. what multiplies its gradient (or momentum average).
+    function effLr(r) {
+      const { name, lr } = r.o, s = r.s;
+      if (name === "RMSProp") return s.r.map((v) => (v ? lr / (Math.sqrt(v) + 1e-8) : lr));
+      if (name === "Adam") return s.effLr ? [...s.effLr] : [lr, lr];
+      return [lr, lr];
+    }
+    function renderSteps() {
+      if (!runs.length) return;
+      const el = document.getElementById("steps"), lo = -4, hi = 2;
+      const bar = (v, col) => {
+        const f = Math.max(0, Math.min(1, (Math.log10(v) - lo) / (hi - lo)));
+        return `<div class="track"><div class="fill" style="width:${(f * 100).toFixed(1)}%;background:var(${col})"></div><span class="val">${v < 0.01 || v >= 100 ? v.toExponential(0) : v.toPrecision(2)}</span></div>`;
+      };
+      let html = `<span class="hd"></span><span class="hd">for x</span><span class="hd">for y</span>`;
+      for (const r of runs) {
+        const e = effLr(r);
+        html += `<span>${r.o.name}${r.dead ? ' <span style="color:var(--bad)">✕</span>' : ""}</span>${bar(e[0], r.o.color)}${bar(e[1], r.o.color)}`;
+      }
+      el.innerHTML = html;
+      const a = runs.find((r) => r.o.name === "Adam"), sgd = runs[0], e = effLr(a);
+      const ratio = e[0] / e[1];
+      const dead = runs.filter((r) => r.dead).map((r) => r.o.name);
+      document.getElementById("adam-readout").textContent = t === 0 ? "" :
+        `Adam gives x ${ratio >= 1 ? ratio.toFixed(1) + "× more" : (1 / ratio).toFixed(1) + "× less"} step size than y, because x's gradients are that much ${ratio >= 1 ? "smaller" : "larger"}.` +
+        (dead.length ? ` ${dead.join(" and ")} diverged (✕).` : "") +
+        (scale !== 1 ? ` Gradients ×${scale}: Adam's rates rescaled by ~1/${scale}, SGD's did not.` : "");
+    }
+
+    function legend() {
+      document.getElementById("legend").innerHTML = OPTS.map((o) => `<span><i style="background:var(${o.color})"></i>${o.name} <span class="readout">lr ${o.lr}</span></span>`).join("");
+    }
+
+    // ---------- input ----------
+    let down = false;
+    const setStart = (e) => {
+      const r = cv.getBoundingClientRect();
+      const [x, y] = toWorld(e.clientX - r.left, e.clientY - r.top);
+      start = [Math.max(-XR, Math.min(XR, x)), Math.max(-YR, Math.min(YR, y))];
+      reset();
+    };
+    cv.addEventListener("pointerdown", (e) => { down = true; cv.setPointerCapture(e.pointerId); setStart(e); });
+    cv.addEventListener("pointermove", (e) => { if (down) setStart(e); });
+    cv.addEventListener("pointerup", () => { down = false; });
+    cv.addEventListener("pointercancel", () => { down = false; });
+    cv.style.cursor = "crosshair";
+
+    document.getElementById("surface-select").addEventListener("change", (e) => {
+      surfKey = e.target.value; start = [...SURFACES[surfKey].start]; bg = null; reset();
+    });
+    const scaleEl = document.getElementById("scale");
+    const showScale = () => { document.getElementById("scale-readout").textContent = `× ${scale >= 1 ? scale : scale.toFixed(2)}`; };
+    scaleEl.addEventListener("input", () => { scale = 10 ** Number(scaleEl.value); showScale(); reset(); });
+    document.getElementById("bias").addEventListener("click", (e) => {
+      biasCorrection = !biasCorrection; e.currentTarget.setAttribute("aria-pressed", String(biasCorrection)); reset();
+    });
+    document.getElementById("replay").addEventListener("click", reset);
+
+    addEventListener("resize", resize);
+    legend(); showScale();
+    Demo.onTheme(resize);
+    reset();
+  </script>
+</body>
+</html>
