@@ -1,0 +1,36 @@
+{
+  "arxiv": "1312.5602",
+  "title": "Playing Atari with Deep Reinforcement Learning",
+  "authors": [
+    "Volodymyr Mnih",
+    "Koray Kavukcuoglu",
+    "David Silver",
+    "Alex Graves",
+    "Ioannis Antonoglou",
+    "Daan Wierstra",
+    "Martin Riedmiller"
+  ],
+  "year": 2013,
+  "url": "https://arxiv.org/abs/1312.5602",
+  "one_liner": "Train an agent live in a gridworld; switch algorithms, add lava and watch the policy change.",
+  "tags": [
+    "rl"
+  ],
+  "difficulty": "intermediate",
+  "interaction": [
+    {
+      "action": "select",
+      "selector": "#algo",
+      "value": "sarsa"
+    },
+    {
+      "action": "wait",
+      "ms": 1500
+    }
+  ],
+  "generated": {
+    "by": "scripts/generate.mjs",
+    "engine": "rl",
+    "text": "built-in templates and the paper's abstract, no AI model"
+  }
+}
