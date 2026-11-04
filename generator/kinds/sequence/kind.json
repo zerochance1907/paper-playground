@@ -1,0 +1,26 @@
+{
+  "summary": "A character-level language model trained in the browser on a small built-in text. The visitor sets how many previous characters the model can see (context length), types a prompt to see the predicted next-character probabilities, generates text with a temperature control, and compares training and held-out bits per character for every context length.",
+  "use_for": "language models, NLP, sequence modelling, transformers, attention, recurrent networks, tokenization, text generation, context length, next-token prediction, translation",
+  "keywords": ["language model", "natural language", "token", "sequence", "transformer", "attention", "recurrent", "rnn", "lstm", "translation", "nlp", "word embedding", "sentence", "corpus", "bert", "gpt", "next-token", "autoregressive", "speech"],
+  "tags": ["nlp", "sequence-models"],
+  "config": {
+    "context": { "enum": [1, 2, 3, 4, 5], "default": 3, "help": "starting context length in characters" }
+  },
+  "one_liner": "Train a tiny language model live; change how much context it sees and watch its predictions sharpen.",
+  "mechanism": "The demo shows the core job of every language model: predict the next symbol from the ones before it. This model just counts which character follows each short context in a small text, so you can see exactly how much more context helps, and where it starts memorising instead of generalising.",
+  "try": [
+    "Slide <strong>context length</strong> from 1 to 5 and press <strong>Generate</strong> each time. The output goes from letter soup to word-like fragments to whole copied phrases.",
+    "Type the start of a word in the prompt box and watch the next-character bars. Longer context makes the prediction much more confident.",
+    "Compare the two bar charts. Training bits per character keeps falling as context grows, while held-out text stops improving: longer contexts are seen too rarely to generalise.",
+    "Raise the <strong>temperature</strong> to make sampling more random, or lower it toward 0 for the single most likely continuation."
+  ],
+  "simplifications": [
+    "The model is a counting n-gram model with Witten–Bell smoothing on a few kilobytes of text, not a neural network. It shows the prediction task and the role of context, but not how neural models generalise across similar contexts.",
+    "It works on single characters with a fixed, short context window. Modern models use subword tokens, learn which earlier tokens matter, and train on billions of words."
+  ],
+  "interaction": [
+    { "action": "range", "selector": "#ctx", "value": 5 },
+    { "action": "click", "selector": "#generate" },
+    { "action": "wait", "ms": 400 }
+  ]
+}

@@ -1,0 +1,35 @@
+<style>
+  select { font: inherit; font-size: 14px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+  #board { width: 100%; border-radius: 8px; cursor: crosshair; }
+  #forward { width: 100%; border-radius: 8px; }
+  .sigma { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+</style>
+<div class="demo-grid">
+  <div class="panel">
+    <h3>1 · Reverse: noise → data · drag here to draw your own target</h3>
+    <canvas id="board" aria-label="Faint target points and a cloud of samples being denoised from random noise toward the target shape."></canvas>
+    <div class="controls">
+      <label>Shape
+        <select id="shape">
+          <option value="moons">Two moons</option>
+          <option value="ring">Ring</option>
+          <option value="gaussians">8 Gaussians</option>
+          <option value="spiral">Spiral</option>
+        </select>
+      </label>
+      <button class="btn primary" id="sample" type="button">▶ Sample</button>
+      <label>Steps <input type="range" id="steps" min="5" max="120" step="5" value="60"></label>
+      <span class="readout" id="steps-readout"></span>
+      <button class="btn" id="stoch" type="button" aria-pressed="true">Stochastic</button>
+    </div>
+    <div class="controls">
+      <label style="flex:1">Timestep <input type="range" id="t" min="0" max="60" step="1" value="0" style="width:100%"></label>
+      <span class="sigma" id="sigma"></span>
+    </div>
+  </div>
+  <div class="panel">
+    <h3>2 · Forward: data + noise at the same level</h3>
+    <canvas id="forward" aria-label="The target points with Gaussian noise added at the noise level of the current timestep."></canvas>
+    <p class="sigma" id="note"></p>
+  </div>
+</div>

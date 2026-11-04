@@ -1,0 +1,27 @@
+{
+  "summary": "A 2D diffusion sampler. A cloud of random noise is denoised step by step into a target shape (or one the visitor draws), using the exact score of the noised data. A second panel shows the forward noising process at the same noise level.",
+  "use_for": "generative models, diffusion models, score matching, denoising, GANs, VAEs, normalizing flows, sampling, image generation, density estimation",
+  "keywords": ["generat", "diffusion", "denois", "score", "gan", "adversarial", "variational", "vae", "autoencoder", "flow", "sampl", "synthes", "likelihood", "density", "latent", "image generation", "text-to-image"],
+  "tags": ["generative"],
+  "config": {
+    "shape": { "enum": ["moons", "ring", "gaussians", "spiral"], "default": "moons", "help": "starting target distribution" },
+    "stochastic": { "enum": [true, false], "default": true, "help": "true = stochastic (DDPM-style) sampler, false = deterministic ODE sampler" }
+  },
+  "one_liner": "Watch random noise get denoised step by step into a shape, then draw your own target.",
+  "mechanism": "The demo shows the generative half of the story on 2D points. It starts from pure noise and repeatedly takes a small step toward where the data is likely, adding a little fresh noise each time. Below, it runs the forward direction: real data getting noisier, the process the model learns to undo.",
+  "try": [
+    "Press <strong>Sample</strong> and scrub the <strong>timestep</strong> slider. The cloud has no structure at high noise, a blurry outline appears in the middle steps, and sharp detail arrives only at the very end.",
+    "Change the <strong>shape</strong>, or drag on the left panel to draw your own target points. Then sample again.",
+    "Cut the number of <strong>denoising steps</strong> to 5. With too few steps the samples come out smeared, which is why fast sampling is an active research problem.",
+    "Toggle <strong>stochastic</strong> off. The deterministic sampler follows smooth paths and gives the same output from the same noise."
+  ],
+  "simplifications": [
+    "Instead of a trained neural network, the denoiser here is the exact score of the noised training points. A real model has to learn that function from data, and it generalises instead of memorising points.",
+    "The data are a few hundred 2D points, not images. The noise schedule is a simple geometric sequence of noise levels (variance-exploding), chosen so every step is visible."
+  ],
+  "interaction": [
+    { "action": "select", "selector": "#shape", "value": "spiral" },
+    { "action": "click", "selector": "#sample" },
+    { "action": "wait", "ms": 1500 }
+  ]
+}

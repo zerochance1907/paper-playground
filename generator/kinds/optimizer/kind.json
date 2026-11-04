@@ -1,0 +1,26 @@
+{
+  "summary": "Six optimizers (SGD, momentum, Nesterov, AdaGrad, RMSProp, Adam) race down a 2D loss surface. The visitor picks the surface, the start point and the learning rate.",
+  "use_for": "optimizers, learning-rate schedules, gradient descent, training dynamics, loss landscapes, convergence",
+  "keywords": ["optimiz", "gradient descent", "sgd", "adam", "momentum", "learning rate", "convergence", "convex", "step size", "second-order", "hessian", "loss landscape", "stochastic gradient"],
+  "tags": ["optimization"],
+  "config": {
+    "highlight": { "enum": ["sgd", "momentum", "nesterov", "adagrad", "rmsprop", "adam"], "default": "adam", "help": "the optimizer closest to the paper's method; it is drawn thicker" },
+    "surface": { "enum": ["ravine", "rosenbrock", "saddle", "noisy"], "default": "ravine", "help": "the starting loss surface" }
+  },
+  "one_liner": "Race six optimizers down a loss surface; pick the terrain, start point and learning rate.",
+  "mechanism": "The demo below makes the core trade-off visible: every optimizer turns gradients into steps differently. Some use one learning rate for every direction, some remember past gradients (momentum), and some rescale each parameter by how large its gradients usually are (AdaGrad, RMSProp, Adam). On a 2D surface you can watch where each rule wins and where it fails.",
+  "try": [
+    "Pick the <strong>Ravine</strong> and watch plain SGD zig-zag across the steep direction while the adaptive optimizers head straight for the minimum.",
+    "Push the <strong>learning rate</strong> slider up until SGD and momentum diverge, then down until they barely move. Which optimizers keep working across the whole range?",
+    "Click anywhere on the map to restart every optimizer from that point. Starting near the <strong>Saddle</strong>'s ridge shows who escapes flat regions.",
+    "Switch to <strong>Noisy bowl</strong>, where every gradient gets random noise as in minibatch training, and compare how calmly each optimizer settles."
+  ],
+  "simplifications": [
+    "The model has only two parameters, and the loss surfaces are simple formulas chosen by hand. Real networks have millions of parameters, and their loss surfaces cannot be drawn.",
+    "Every optimizer shares one global learning rate set by the slider (AdaGrad gets 10× because it shrinks its steps over time). Each method's hyper-parameters are textbook defaults, not tuned per surface."
+  ],
+  "interaction": [
+    { "action": "select", "selector": "#surface-select", "value": "rosenbrock" },
+    { "action": "wait", "ms": 1200 }
+  ]
+}

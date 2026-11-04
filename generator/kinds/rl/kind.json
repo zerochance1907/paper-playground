@@ -1,0 +1,25 @@
+{
+  "summary": "A tabular reinforcement-learning agent learns to reach a goal in a gridworld with a cliff. The visitor can switch between Q-learning, SARSA and REINFORCE (policy gradient), change exploration and the discount factor, and click cells to add walls or lava. The demo shows learned values, the greedy policy and the return per episode.",
+  "use_for": "reinforcement learning, policy gradients, Q-learning, value functions, exploration, robotics control, decision making, reward, planning, PPO, actor-critic",
+  "keywords": ["reinforcement", "reward", "policy", "agent", "q-learning", "value function", "actor-critic", "markov decision", "mdp", "exploration", "robot", "control", "atari", "game", "planning", "bellman", "trajectory", "environment"],
+  "tags": ["rl"],
+  "config": {
+    "algorithm": { "enum": ["q-learning", "sarsa", "reinforce"], "default": "q-learning", "help": "the algorithm closest to the paper's method" }
+  },
+  "one_liner": "Train an agent live in a gridworld; switch algorithms, add lava and watch the policy change.",
+  "mechanism": "The demo is reinforcement learning at its smallest. An agent walks a grid, gets −1 per step, −100 for stepping into lava and reaches the goal for free. From those rewards alone it has to discover a good route. The coloured cells show how much reward the agent expects from each cell, and the arrows show the move it would choose there.",
+  "try": [
+    "Let <strong>Q-learning</strong> train and you'll see its greedy policy hug the edge of the lava: the shortest path. Switch to <strong>SARSA</strong>, which accounts for its own random exploration moves and learns a safer route further from the lava.",
+    "Click cells on the grid to add walls (and click again for lava) while it trains, and watch the values and arrows re-route.",
+    "Set <strong>exploration ε</strong> to 0. With no randomness the agent can lock onto its first route and never find a better one.",
+    "Lower the <strong>discount γ</strong>, and far-away rewards matter less, so values fade with distance from the goal."
+  ],
+  "simplifications": [
+    "The world is a tiny grid with a lookup table of values, so no neural network is involved. The paper's setting is likely to need function approximation, continuous states or far longer horizons.",
+    "REINFORCE here uses a tabular softmax policy and a running-average baseline. Modern policy-gradient methods add a learned critic, batched updates and stabilisers such as clipping."
+  ],
+  "interaction": [
+    { "action": "select", "selector": "#algo", "value": "sarsa" },
+    { "action": "wait", "ms": 1500 }
+  ]
+}

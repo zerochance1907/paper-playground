@@ -1,0 +1,69 @@
+name: Generate a paper demo (free, no AI keys)
+
+# The zero-cost path: scripts/generate.mjs picks a hand-written demo engine and fills in
+# the paper's text from arXiv, with no model calls. It runs when a maintainer adds the
+# `generate-free` label to a paper request, or by hand from the Actions tab.
+# For richer AI-written demos, use the `build-paper` label (needs a Claude secret) or
+# run `npm run generate -- <id>` locally with Ollama.
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      arxiv:
+        description: arXiv URL or id
+        required: true
+      engine:
+        description: "Optional: force an engine (optimizer, classifier, generative, rl, sequence)"
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: generate-paper-${{ github.event.issue.number || github.run_id }}
+
+jobs:
+  generate:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'generate-free'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci && npx playwright install --with-deps chromium
+
+      - name: Read the request
+        id: req
+        env:
+          BODY: ${{ github.event.issue.body }}
+          INPUT_ARXIV: ${{ inputs.arxiv }}
+        run: |
+          src="${INPUT_ARXIV:-$BODY}"
+          id=$(printf '%s' "$src" | grep -oE '[0-9]{4}\.[0-9]{4,5}' | head -1)
+          if [ -z "$id" ]; then echo "No arXiv id found" >&2; exit 1; fi
+          echo "arxiv=$id" >> "$GITHUB_OUTPUT"
+
+      - name: Generate and check in a real browser
+        env:
+          ENGINE: ${{ inputs.engine }}
+        run: |
+          node scripts/generate.mjs "${{ steps.req.outputs.arxiv }}" --backend template ${ENGINE:+--kind "$ENGINE"}
+          slug=$(git status --porcelain papers | grep -oE 'papers/[^/]+' | sed 's#papers/##' | sort -u | head -1)
+          echo "SLUG=$slug" >> "$GITHUB_ENV"
+
+      - uses: peter-evans/create-pull-request@v7
+        with:
+          branch: paper/${{ env.SLUG }}
+          title: "Add generated paper demo: ${{ env.SLUG }}"
+          commit-message: "Add generated paper demo: ${{ env.SLUG }}"
+          add-paths: papers/${{ env.SLUG }}/**
+          body: |
+            Demo for arXiv:${{ steps.req.outputs.arxiv }}, generated for free by `scripts/generate.mjs` (no AI model) and passing `scripts/check.mjs` in a real browser.
+            ${{ github.event.issue.number && format('Closes #{0}', github.event.issue.number) || '' }}
+
+            Check that the chosen engine fits the paper. If it doesn't, rerun from the Actions tab with a different engine.
