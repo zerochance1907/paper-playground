@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Diffusion Policy · Paper → Playground</title>
+  <meta name="description" content="Train two robot policies on left-or-right demos: regression averages into the wall, diffusion picks a side.">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="../_shared/demo.css">
+  <script type="module" src="../_shared/demo.js"></script>
+  <style>
+    select { font: inherit; font-size: 14px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+    .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-top: 8px; }
+    .legend i { display: inline-block; width: 14px; height: 3px; vertical-align: 3px; margin-right: 5px; border-radius: 2px; }
+    .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+    .stat { background: var(--surface); border-radius: 8px; padding: 8px 10px; font-size: 13px; border-top: 3px solid var(--bad); }
+    .stat.d { border-top-color: var(--accent-2); }
+    .stat h4 { margin: 0 0 2px; font-size: 13px; }
+    .stat .big { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+    .progress { height: 6px; background: var(--surface); border-radius: 3px; overflow: hidden; margin-top: 6px; }
+    .progress div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  </style>
+</head>
+<body>
+  <header data-paper-header></header>
+  <main>
+    <section id="demo" aria-label="Interactive diffusion policy demo">
+      <div class="demo-grid">
+        <div class="panel">
+          <h3>1 · Reach the goal without touching the obstacle. Drag the start (orange dot)</h3>
+          <canvas id="world" aria-label="Top-down 2D world. A grey disc obstacle sits between the orange start dot at the bottom and the green goal at the top. Faint grey lines are human demonstrations going around the left or the right. The red path is the regression policy's plan and the blue paths are samples from the diffusion policy; an X marks a collision."></canvas>
+          <div class="controls">
+            <button class="btn primary" id="resample" type="button">Sample again</button>
+            <label>Demos go <select id="mix">
+              <option value="0.5" selected>50% left / 50% right</option>
+              <option value="0.8">80% left / 20% right</option>
+              <option value="1">100% left</option>
+            </select></label>
+            <button class="btn" id="show-demos" type="button" aria-pressed="true">Show demos</button>
+          </div>
+          <div class="controls" style="margin-top:8px">
+            <label>Denoising step <input type="range" id="kstep" min="0" max="20" step="1" value="0"></label>
+            <span class="readout" id="k-readout"></span>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>2 · Where do plans pass the obstacle? (from this start)</h3>
+          <canvas id="hist" aria-label="Histogram of the horizontal position at which paths pass the obstacle's height. Grey bars: demonstrations, with two humps left and right of the obstacle. Blue bars: diffusion policy samples, also two humps. A red line marks the single regression plan, which sits in the middle, inside the obstacle."></canvas>
+          <div class="stats">
+            <div class="stat"><h4 style="color:var(--bad)">Regression (MSE)</h4><span class="big" id="reg-rate">–</span><span class="readout" id="reg-note"></span></div>
+            <div class="stat d"><h4 style="color:var(--accent-2)">Diffusion policy</h4><span class="big" id="dif-rate">–</span><span class="readout" id="dif-note"></span></div>
+          </div>
+          <p class="readout" style="margin:8px 0 0">Success rate over 40 random starts in the start zone. Touching the obstacle counts as failure.</p>
+          <h3 style="margin-top:12px">Training both policies in your browser</h3>
+          <div class="progress"><div id="bar"></div></div>
+          <p class="readout" id="train-readout" style="margin:6px 0 0"></p>
+        </div>
+      </div>
+    </section>
+
+    <section id="explainer">
+      <h2>The idea in 60 seconds</h2>
+      <p>A popular way to teach a robot is <strong>behaviour cloning</strong>: record a person doing
+        the task, then train a network to map what the robot sees to what the person did. The simplest
+        version is regression: minimise the squared error between the network's action and the
+        demonstrated one.</p>
+      <p>The trouble is that people solve the same situation in different ways. Here half the demos go
+        around the obstacle on the left and half on the right, both perfectly good. For squared error the
+        best single answer is the <strong>average</strong> of the two, and the average of
+        "go left" and "go right" is "go straight", into the obstacle. The data is
+        <strong>multimodal</strong>, and regression can only output one point.</p>
+      <p>Diffusion Policy instead treats the action as something to <em>generate</em>, the way image
+        diffusion models generate pictures. It starts from random noise and uses a learned denoiser,
+        conditioned on the observation, to refine it step by step into a clean action. At high noise the
+        denoiser's best guess is still the blurry average, but each step adds detail, and the small random
+        differences decide which mode a sample falls into. Because it learns the whole distribution of
+        actions, every sample commits to left <em>or</em> right, never the impossible middle.</p>
+      <p>The paper also has the policy predict a <strong>sequence</strong> of future actions at once,
+        not one step at a time. This keeps the robot consistent within a mode instead of dithering
+        between left and right. Here every plan is a short sequence of 8 waypoints, generated together.</p>
+      <div class="try">
+        <h3>Try this</h3>
+        <ul>
+          <li>Watch training: early diffusion samples are a scribble; within seconds they split into two clean families of paths, while the red regression plan heads straight for the obstacle.</li>
+          <li>Drag the <strong>Denoising step</strong> slider to 20, then slowly back to 0. Dots are the noisy plan; lines are the denoiser's current guess of the clean plan. At high noise every guess is the straight average route, exactly like regression. As noise is removed, each sample commits to the left or the right.</li>
+          <li>Drag the start to the far left or right of the start zone. Regression may sneak past at the edges, but in front of the obstacle it crashes every time. Panel 2 shows why: its single answer sits between the two humps.</li>
+          <li>Switch to <strong>100% left</strong>. With one mode in the data, regression works fine. Its problem is averaging modes, not being too weak a model.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="simplifications">
+      <h2>How this demo simplifies the paper</h2>
+      <ul>
+        <li>The "robot" is a point in 2D, the observation is just its start position, and the demonstrations are generated by a script (curves around the left or right of the disc), not recorded from people or images. The paper conditions on camera images and robot state and runs real robots and simulated benchmarks like Push-T.</li>
+        <li>Each policy plans the whole route as one sequence of 8 waypoints and executes it open loop. The paper predicts shorter action sequences (e.g. 16 steps), executes about 8 of them, then observes again and re-plans (receding horizon).</li>
+        <li>The denoiser is a 2-hidden-layer MLP (64 units) that predicts the clean action directly, with 20 diffusion steps, trained for 2,500 Adam steps in your browser. The paper uses a 1D temporal U-Net or a transformer that predicts the noise, ~100 training steps of noise, and faster DDIM sampling at test time.</li>
+        <li>The red baseline is plain mean-squared-error regression with the same network size, to make the averaging problem obvious. The paper's actual baselines are stronger multimodal methods (LSTM-GMM, IBC, BET); it reports Diffusion Policy beating them, which this toy does not reproduce.</li>
+      </ul>
+    </section>
+  </main>
+
+  <script type="module">
+    const $ = (id) => document.getElementById(id);
+
+    // ---------------- world ----------------
+    const OB = { x: 0, y: 0.05, r: 0.25 }, GOAL = { x: 0, y: 0.8, r: 0.09 };
+    const ZONE = { x0: -0.3, x1: 0.3, y0: -0.88, y1: -0.72 };     // where demos start
+    const H = 8, KD = 20, HID = 64, YS = 0.9, BATCH = 64, LR = 3e-3, TOTAL = 2500, NDEMO = 600;
+    let rs = 5;
+    const rand = () => { rs = (rs * 1664525 + 1013904223) >>> 0; return rs / 2 ** 32; };
+    const gauss = () => Math.sqrt(-2 * Math.log(1 - rand())) * Math.cos(2 * Math.PI * rand());
+
+    // ---------------- tiny MLP with manual backprop + Adam ----------------
+    function makeMLP(sizes) {
+      const L = [];
+      for (let l = 0; l < sizes.length - 1; l++) {
+        const n = sizes[l], m = sizes[l + 1], W = new Float32Array(n * m), s = Math.sqrt(2 / n);
+        for (let i = 0; i < W.length; i++) W[i] = gauss() * s * (l === sizes.length - 2 ? 0.3 : 1);
+        L.push({ n, m, W, b: new Float32Array(m), gW: new Float32Array(n * m), gb: new Float32Array(m),
+          mW: new Float32Array(n * m), vW: new Float32Array(n * m), mb: new Float32Array(m), vb: new Float32Array(m) });
+      }
+      return { L, t: 0, acts: [] };
+    }
+    function forward(net, X, B) {
+      net.acts = [X]; let A = X;
+      net.L.forEach((ly, li) => {
+        const out = new Float32Array(B * ly.m), last = li === net.L.length - 1;
+        for (let bi = 0; bi < B; bi++) {
+          const ao = bi * ly.n, oo = bi * ly.m;
+          for (let j = 0; j < ly.m; j++) {
+            let s = ly.b[j]; const wo = j * ly.n;
+            for (let i = 0; i < ly.n; i++) s += ly.W[wo + i] * A[ao + i];
+            out[oo + j] = last || s > 0 ? s : 0;   // ReLU on hidden layers
+          }
+        }
+        net.acts.push(out); A = out;
+      });
+      return A;
+    }
+    function backward(net, dY, B) {
+      let d = dY;
+      for (let li = net.L.length - 1; li >= 0; li--) {
+        const ly = net.L[li], A = net.acts[li], dA = li > 0 ? new Float32Array(B * ly.n) : null;
+        for (let bi = 0; bi < B; bi++) {
+          const ao = bi * ly.n, oo = bi * ly.m;
+          for (let j = 0; j < ly.m; j++) {
+            const g = d[oo + j]; if (g === 0) continue;
+            ly.gb[j] += g; const wo = j * ly.n;
+            for (let i = 0; i < ly.n; i++) { ly.gW[wo + i] += g * A[ao + i]; if (dA) dA[ao + i] += g * ly.W[wo + i]; }
+          }
+        }
+        if (dA) for (let i = 0; i < dA.length; i++) if (A[i] <= 0) dA[i] = 0;
+        d = dA;
+      }
+    }
+    function adam(net, lr) {
+      net.t++; const b1 = 0.9, b2 = 0.999, c1 = 1 - b1 ** net.t, c2 = 1 - b2 ** net.t;
+      for (const ly of net.L) for (const [p, g, m, v] of [[ly.W, ly.gW, ly.mW, ly.vW], [ly.b, ly.gb, ly.mb, ly.vb]]) {
+        for (let i = 0; i < p.length; i++) {
+          m[i] = b1 * m[i] + (1 - b1) * g[i]; v[i] = b2 * v[i] + (1 - b2) * g[i] * g[i];
+          p[i] -= (lr * m[i] / c1) / (Math.sqrt(v[i] / c2) + 1e-8); g[i] = 0;
+        }
+      }
+    }
+
+    // ---------------- demonstrations ----------------
+    const nearOb = (x, y, m) => Math.hypot(x - OB.x, y - OB.y) < OB.r + m;
+    function demoPath(P0, s) {
+      for (let tries = 0; tries < 50; tries++) {
+        const C = [s * (0.78 + rand() * 0.14) + 0.35 * P0[0], OB.y + (rand() - 0.5) * 0.16], P2 = [GOAL.x + (rand() - 0.5) * 0.05, GOAL.y];
+        const fine = [];
+        for (let i = 0; i <= 300; i++) { const t = i / 300, u = 1 - t; fine.push([u * u * P0[0] + 2 * u * t * C[0] + t * t * P2[0], u * u * P0[1] + 2 * u * t * C[1] + t * t * P2[1]]); }
+        if (fine.some(([x, y]) => nearOb(x, y, 0.1))) continue;
+        const cum = [0]; for (let i = 1; i < fine.length; i++) cum.push(cum[i - 1] + Math.hypot(fine[i][0] - fine[i - 1][0], fine[i][1] - fine[i - 1][1]));
+        const way = []; let j = 0;
+        for (let h = 1; h <= H; h++) { const target = (h / H) * cum[cum.length - 1]; while (cum[j + 1] < target && j < cum.length - 2) j++; way.push(fine[j + 1]); }
+        return way;
+      }
+      return null;
+    }
+    const randStart = () => [ZONE.x0 + rand() * (ZONE.x1 - ZONE.x0), ZONE.y0 + rand() * (ZONE.y1 - ZONE.y0)];
+    // action = 8 waypoints relative to the start, scaled to roughly unit size
+    function encode(start, way) { const a = new Float32Array(2 * H); way.forEach((p, h) => { a[2 * h] = (p[0] - start[0]) / YS; a[2 * h + 1] = (p[1] - start[1]) / YS - 1; }); return a; }
+    function decode(start, a, o = 0) { const w = []; for (let h = 0; h < H; h++) w.push([start[0] + a[o + 2 * h] * YS, start[1] + (a[o + 2 * h + 1] + 1) * YS]); return w; }
+
+    let demos, data;
+    function makeData(fracLeft) {
+      demos = [];
+      while (demos.length < NDEMO) {
+        const P0 = randStart(), s = rand() < fracLeft ? -1 : 1, way = demoPath(P0, s);
+        if (way) demos.push({ start: P0, way });
+      }
+      data = { S: new Float32Array(NDEMO * 2), A: new Float32Array(NDEMO * 2 * H) };
+      demos.forEach((d, i) => { data.S[2 * i] = d.start[0]; data.S[2 * i + 1] = d.start[1]; data.A.set(encode(d.start, d.way), i * 2 * H); });
+    }
+
+    // ---------------- diffusion (cosine schedule, denoiser predicts the clean action) ----------------
+    const abar = [], beta = [];
+    for (let k = 0; k <= KD; k++) abar.push((Math.cos(((k / KD + 0.008) / 1.008) * Math.PI / 2) / Math.cos((0.008 / 1.008) * Math.PI / 2)) ** 2);
+    for (let k = 1; k <= KD; k++) beta[k] = Math.min(0.999, 1 - abar[k] / abar[k - 1]);
+    const TF = 6, DIN = 2 + 2 * H + TF, AD = 2 * H;
+    function timeFeat(k, out, o) { const x = k / KD; for (let f = 0; f < TF / 2; f++) { out[o + 2 * f] = Math.sin(x * Math.PI * (f + 1)); out[o + 2 * f + 1] = Math.cos(x * Math.PI * (f + 1)); } }
+
+    let reg, den, step = 0, lossR = NaN, lossD = NaN;
+    function newNets() { reg = makeMLP([2, HID, HID, AD]); den = makeMLP([DIN, HID, HID, AD]); step = 0; }
+    const Xr = new Float32Array(BATCH * 2), Yr = new Float32Array(BATCH * AD), Xd = new Float32Array(BATCH * DIN);
+    function trainStep() {
+      for (let b = 0; b < BATCH; b++) {
+        const i = Math.floor(rand() * NDEMO), k = 1 + Math.floor(rand() * KD), sa = Math.sqrt(abar[k]), sn = Math.sqrt(1 - abar[k]);
+        Xr[b * 2] = Xd[b * DIN] = data.S[i * 2]; Xr[b * 2 + 1] = Xd[b * DIN + 1] = data.S[i * 2 + 1];
+        for (let j = 0; j < AD; j++) {
+          const a0 = data.A[i * AD + j];
+          Yr[b * AD + j] = a0;
+          Xd[b * DIN + 2 + j] = sa * a0 + sn * gauss();   // forward process: noise the demo action
+        }
+        timeFeat(k, Xd, b * DIN + 2 + AD);
+      }
+      // regression: predict the action from the observation, squared error
+      const pr = forward(reg, Xr, BATCH), dr = new Float32Array(pr.length); let lr_ = 0;
+      for (let i = 0; i < pr.length; i++) { const e = pr[i] - Yr[i]; lr_ += e * e; dr[i] = (2 * e) / pr.length; }
+      backward(reg, dr, BATCH); adam(reg, LR);
+      // diffusion: predict the clean action from (observation, noisy action, noise level)
+      const pd = forward(den, Xd, BATCH), dd = new Float32Array(pd.length); let ld = 0;
+      for (let i = 0; i < pd.length; i++) { const e = pd[i] - Yr[i]; ld += e * e; dd[i] = (2 * e) / pd.length; }
+      backward(den, dd, BATCH); adam(den, LR);
+      step++;
+      lossR = isNaN(lossR) ? lr_ / pr.length : 0.98 * lossR + 0.02 * lr_ / pr.length;
+      lossD = isNaN(lossD) ? ld / pd.length : 0.98 * lossD + 0.02 * ld / pd.length;
+    }
+    // DDPM sampling for N observations; returns every intermediate x_k (k = KD .. 0)
+    function sampleDiffusion(starts) {
+      const N = starts.length; let x = new Float32Array(N * AD);
+      for (let i = 0; i < x.length; i++) x[i] = gauss();
+      const hist = [{ x: x.slice(), x0: null }], X = new Float32Array(N * DIN);
+      for (let k = KD; k >= 1; k--) {
+        for (let b = 0; b < N; b++) { X[b * DIN] = starts[b][0]; X[b * DIN + 1] = starts[b][1]; X.set(x.subarray(b * AD, b * AD + AD), b * DIN + 2); timeFeat(k, X, b * DIN + 2 + AD); }
+        const x0h = forward(den, X, N), ab = abar[k], abp = abar[k - 1], bk = beta[k], nx = new Float32Array(x.length);
+        for (let i = 0; i < x.length; i++) x0h[i] = Math.max(-2, Math.min(2, x0h[i]));
+        hist[hist.length - 1].x0 = x0h;   // the denoiser's guess of the clean plan at step k
+        for (let i = 0; i < x.length; i++) {
+          const x0 = x0h[i];
+          const mean = (Math.sqrt(abp) * bk / (1 - ab)) * x0 + (Math.sqrt(1 - bk) * (1 - abp) / (1 - ab)) * x[i];
+          nx[i] = k > 1 ? mean + Math.sqrt((bk * (1 - abp)) / (1 - ab)) * gauss() : mean;
+        }
+        x = nx; hist.push({ x: x.slice(), x0: null });
+      }
+      return hist;
+    }
+    // follow a plan; stop at the first contact with the obstacle
+    function execute(start, way) {
+      const pts = [start, ...way];
+      for (let i = 1; i < pts.length; i++) for (let q = 1; q <= 10; q++) {
+        const x = pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * q / 10, y = pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * q / 10;
+        if (nearOb(x, y, 0)) return { path: pts.slice(0, i).concat([[x, y]]), ok: false, crash: [x, y] };
+      }
+      const e = pts[pts.length - 1];
+      return { path: pts, ok: Math.hypot(e[0] - GOAL.x, e[1] - GOAL.y) < GOAL.r * 1.6, crash: null };
+    }
+    // x position where a path crosses the obstacle's height
+    function crossX(path) {
+      for (let i = 1; i < path.length; i++) {
+        const [a, b] = [path[i - 1], path[i]];
+        if ((a[1] - OB.y) * (b[1] - OB.y) <= 0 && a[1] !== b[1]) return a[0] + (b[0] - a[0]) * (OB.y - a[1]) / (b[1] - a[1]);
+      }
+      return null;
+    }
+
+    // ---------------- state ----------------
+    let start = [0, -0.8], showDemos = true, kView = 0, NSHOW = 12, NHIST = 64;
+    let regPlan = null, difHist = null, regRate = null, difRate = null, difLeft = 0;
+    function plan() {
+      regPlan = decode(start, forward(reg, Float32Array.from(start), 1));
+      difHist = sampleDiffusion(Array.from({ length: NHIST }, () => start));
+    }
+    function evaluate() {
+      const starts = Array.from({ length: 40 }, randStart);
+      const R = forward(reg, Float32Array.from(starts.flat()), 40);
+      regRate = starts.filter((s, i) => execute(s, decode(s, R, i * AD)).ok).length;
+      const fin = sampleDiffusion(starts)[KD].x;
+      let ok = 0; difLeft = 0;
+      starts.forEach((s, i) => { const r = execute(s, decode(s, fin, i * AD)); if (r.ok) { ok++; if (crossX(r.path) < OB.x) difLeft++; } });
+      difRate = ok;
+    }
+
+    // ---------------- drawing ----------------
+    let ctx, W = 0, Hh = 0, hctx, HW = 0, HH = 0;
+    const S = () => Hh / 2;
+    const toPx = ([x, y]) => [W / 2 + x * S(), Hh / 2 - y * S()];
+    const toWorld = (px, py) => [(px - W / 2) / S(), -(py - Hh / 2) / S()];
+    function poly(c, pts) { c.beginPath(); pts.forEach((p, i) => { const [x, y] = toPx(p); i ? c.lineTo(x, y) : c.moveTo(x, y); }); c.stroke(); }
+    function cross(c, p, col) {
+      const [x, y] = toPx(p); c.strokeStyle = col; c.lineWidth = 2.5; c.beginPath();
+      c.moveTo(x - 5, y - 5); c.lineTo(x + 5, y + 5); c.moveTo(x + 5, y - 5); c.lineTo(x - 5, y + 5); c.stroke();
+    }
+    function drawWorld() {
+      const c = ctx, col = Demo.color;
+      c.clearRect(0, 0, W, Hh);
+      const [ax, ay] = toPx([-1, 1]);
+      c.fillStyle = col("--surface"); c.fillRect(ax, ay, 2 * S(), 2 * S());
+      // start zone
+      const [zx, zy] = toPx([ZONE.x0, ZONE.y1]), [zx1, zy1] = toPx([ZONE.x1, ZONE.y0]);
+      c.setLineDash([4, 4]); c.strokeStyle = col("--muted"); c.lineWidth = 1; c.strokeRect(zx, zy, zx1 - zx, zy1 - zy); c.setLineDash([]);
+      c.fillStyle = col("--muted"); c.font = "11px system-ui"; c.fillText("start zone", zx1 + 6, zy1 - 2);
+      // demos
+      if (showDemos) {
+        c.strokeStyle = col("--muted"); c.lineWidth = 1; c.globalAlpha = 0.22;
+        for (let i = 0; i < 90; i++) poly(c, [demos[i].start, ...demos[i].way]);
+        c.globalAlpha = 1;
+      }
+      // obstacle & goal
+      const [ox, oy] = toPx([OB.x, OB.y]);
+      c.fillStyle = col("--muted"); c.globalAlpha = 0.55; c.beginPath(); c.arc(ox, oy, OB.r * S(), 0, 7); c.fill(); c.globalAlpha = 1;
+      const [gx, gy] = toPx([GOAL.x, GOAL.y]);
+      c.strokeStyle = col("--good"); c.lineWidth = 3; c.beginPath(); c.arc(gx, gy, GOAL.r * S(), 0, 7); c.stroke();
+      c.fillStyle = col("--good"); c.font = "600 12px system-ui"; c.fillText("goal", gx + GOAL.r * S() + 6, gy + 4);
+      if (!difHist) return;
+      // diffusion samples at the chosen denoising step (clipped to the world square)
+      c.save(); c.beginPath(); c.rect(ax, ay, 2 * S(), 2 * S()); c.clip();
+      const hk = difHist[KD - kView];
+      c.lineWidth = 2;
+      for (let b = 0; b < NSHOW; b++) {
+        const way = decode(start, hk.x, b * AD);
+        c.strokeStyle = col("--accent-2"); c.fillStyle = col("--accent-2");
+        if (kView > 0) {
+          // dots: the noisy plan x_k; line: the denoiser's current clean guess
+          c.globalAlpha = 0.45;
+          for (const p of way) { const [x, y] = toPx(p); c.beginPath(); c.arc(x, y, 2.5, 0, 7); c.fill(); }
+          c.globalAlpha = 0.7; poly(c, [start, ...decode(start, hk.x0, b * AD)]);
+          c.globalAlpha = 1;
+        } else {
+          const r = execute(start, way);
+          c.globalAlpha = 0.8; poly(c, r.path); c.globalAlpha = 1;
+          if (r.crash) cross(c, r.crash, col("--accent-2"));
+        }
+      }
+      c.restore();
+      // regression plan
+      const r = execute(start, regPlan);
+      c.strokeStyle = col("--bad"); c.lineWidth = 3.5; poly(c, r.path);
+      if (r.crash) cross(c, r.crash, col("--bad"));
+      // start
+      const [sx, sy] = toPx(start);
+      c.fillStyle = col("--accent"); c.beginPath(); c.arc(sx, sy, 8, 0, 7); c.fill();
+      c.strokeStyle = col("--surface"); c.lineWidth = 2; c.stroke();
+    }
+    function drawHist() {
+      const c = hctx, col = Demo.color;
+      c.clearRect(0, 0, HW, HH);
+      c.fillStyle = col("--surface"); c.fillRect(0, 0, HW, HH);
+      const left = 8, right = HW - 8, bot = HH - 20, top = 8, NB = 30, X0 = -0.9, X1 = 0.9;
+      const X = (x) => left + ((x - X0) / (X1 - X0)) * (right - left);
+      // obstacle span
+      c.fillStyle = col("--muted"); c.globalAlpha = 0.25; c.fillRect(X(OB.x - OB.r), top, X(OB.x + OB.r) - X(OB.x - OB.r), bot - top); c.globalAlpha = 1;
+      c.fillStyle = col("--muted"); c.font = "11px system-ui"; c.fillText("obstacle", X(OB.x) - 20, bot - 5);
+      const bin = (xs) => { const h = new Array(NB).fill(0); for (const x of xs) if (x !== null) { const i = Math.floor(((x - X0) / (X1 - X0)) * NB); if (i >= 0 && i < NB) h[i]++; } const s = xs.length || 1; return h.map((v) => v / s); };
+      const near = demos.filter((d) => Math.hypot(d.start[0] - start[0], d.start[1] - start[1]) < 0.15);
+      const hd = bin((near.length > 10 ? near : demos).map((d) => crossX([d.start, ...d.way])));
+      const fin = difHist ? difHist[KD].x : null;
+      const hs = fin ? bin(Array.from({ length: NHIST }, (_, b) => crossX([start, ...decode(start, fin, b * AD)]))) : new Array(NB).fill(0);
+      const m = Math.max(0.05, ...hd, ...hs), bw = (right - left) / NB;
+      hd.forEach((v, i) => { c.fillStyle = col("--muted"); c.globalAlpha = 0.5; const h = (v / m) * (bot - top - 14); c.fillRect(left + i * bw + 1, bot - h, bw - 2, h); });
+      c.globalAlpha = 1;
+      hs.forEach((v, i) => { c.fillStyle = col("--accent-2"); const h = (v / m) * (bot - top - 14); c.fillRect(left + i * bw + bw * 0.25, bot - h, bw * 0.5, h); });
+      if (regPlan) {
+        const rx = crossX([start, ...regPlan]);
+        if (rx !== null) { c.strokeStyle = col("--bad"); c.lineWidth = 3; c.beginPath(); c.moveTo(X(rx), top); c.lineTo(X(rx), bot); c.stroke();
+          c.fillStyle = col("--bad"); c.font = "600 11px system-ui"; c.fillText("regression", Math.min(right - 60, X(rx) + 4), top + 26); }
+      }
+      c.strokeStyle = col("--border"); c.lineWidth = 1; c.beginPath(); c.moveTo(left, bot + 0.5); c.lineTo(right, bot + 0.5); c.stroke();
+      c.fillStyle = col("--muted"); c.font = "11px system-ui";
+      c.fillText("← passes left", left, HH - 5); c.fillText("passes right →", right - 78, HH - 5);
+      c.fillStyle = col("--muted"); c.fillText("■ demos", left + 2, top + 12);
+      c.fillStyle = col("--accent-2"); c.fillText("■ diffusion samples", left + 2, top + 26);
+    }
+    function render() {
+      if (!ctx) return;
+      drawWorld(); drawHist();
+      $("k-readout").textContent = kView === 0 ? "0 = final clean plans" : `${kView} of ${KD}${kView === KD ? " (pure noise)" : ""} · dots = noisy plan, lines = denoiser's guess`;
+      $("reg-rate").textContent = regRate === null ? "–" : `${regRate}/40`;
+      $("dif-rate").textContent = difRate === null ? "–" : `${difRate}/40`;
+      $("reg-note").textContent = regRate === null ? "" : " reach the goal";
+      $("dif-note").textContent = difRate === null ? "" : ` reach it · ${difLeft} left, ${difRate - difLeft} right`;
+      $("bar").style.width = `${(100 * step) / TOTAL}%`;
+      $("train-readout").textContent = step < TOTAL
+        ? `step ${step}/${TOTAL} · regression loss ${lossR.toFixed(4)} · denoising loss ${lossD.toFixed(4)}`
+        : `done: ${TOTAL} steps on ${NDEMO} demos · regression loss ${lossR.toFixed(4)}${$("mix").value === "1" ? "" : " (stuck high: the demos disagree)"} · denoising loss ${lossD.toFixed(4)}`;
+    }
+    function resize() {
+      const w = Math.max(240, $("world").parentElement.clientWidth - 24);
+      W = w; Hh = Math.round(Math.min(420, w));
+      ctx = Demo.hiDPI($("world"), W, Hh);
+      HW = Math.max(240, $("hist").parentElement.clientWidth - 24); HH = 150;
+      hctx = Demo.hiDPI($("hist"), HW, HH);
+      render();
+    }
+
+    // ---------------- training loop in rAF batches ----------------
+    let frame = 0, looping = false;
+    function loop() {
+      if (step >= TOTAL) { looping = false; return; }
+      looping = true;
+      const t0 = performance.now();
+      do trainStep(); while (step < TOTAL && performance.now() - t0 < 12);
+      if (++frame % 6 === 0 || step >= TOTAL) plan();
+      if (frame % 60 === 0 || step >= TOTAL) evaluate();
+      render();
+      requestAnimationFrame(loop);
+    }
+    function retrain() {
+      makeData(Number($("mix").value)); newNets(); lossR = lossD = NaN; regRate = difRate = null; plan(); render();
+      if (!looping) { looping = true; requestAnimationFrame(loop); }
+    }
+
+    // ---------------- interaction ----------------
+    const wc = $("world"); let dragging = false;
+    const moveStart = (e) => {
+      const r = wc.getBoundingClientRect(); const [x, y] = toWorld(e.clientX - r.left, e.clientY - r.top);
+      start = [Math.max(ZONE.x0, Math.min(ZONE.x1, x)), Math.max(ZONE.y0, Math.min(ZONE.y1, y))];
+      plan(); render();
+    };
+    wc.addEventListener("pointerdown", (e) => { dragging = true; wc.setPointerCapture(e.pointerId); moveStart(e); });
+    wc.addEventListener("pointermove", (e) => { if (dragging) moveStart(e); });
+    wc.addEventListener("pointerup", () => { dragging = false; });
+    wc.addEventListener("pointercancel", () => { dragging = false; });
+    $("resample").addEventListener("click", () => { plan(); render(); });
+    $("mix").addEventListener("change", retrain);
+    $("show-demos").addEventListener("click", (e) => { showDemos = !showDemos; e.currentTarget.setAttribute("aria-pressed", String(showDemos)); render(); });
+    $("kstep").addEventListener("input", (e) => { kView = Number(e.target.value); render(); });
+
+    makeData(0.5); newNets(); plan();
+    addEventListener("resize", resize);
+    Demo.onTheme(resize);
+    looping = true; requestAnimationFrame(loop);
+  </script>
+</body>
+</html>

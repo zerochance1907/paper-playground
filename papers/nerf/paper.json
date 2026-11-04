@@ -1,0 +1,36 @@
+{
+  "arxiv": "2003.08934",
+  "title": "NeRF: Representing Scenes as Neural Radiance Fields for View Synthesis",
+  "authors": [
+    "Ben Mildenhall",
+    "Pratul P. Srinivasan",
+    "Matthew Tancik",
+    "Jonathan T. Barron",
+    "Ravi Ramamoorthi",
+    "Ren Ng"
+  ],
+  "year": 2020,
+  "url": "https://arxiv.org/abs/2003.08934",
+  "one_liner": "Move a camera through a 2D scene, inspect volume rendering along a ray, and fit a field from a few views.",
+  "tags": [
+    "3d",
+    "vision"
+  ],
+  "difficulty": "intermediate",
+  "interaction": [
+    {
+      "action": "click",
+      "selector": "#train"
+    },
+    {
+      "action": "drag",
+      "selector": "#scene",
+      "from": [0.15, 0.85],
+      "to": [0.1, 0.55]
+    },
+    {
+      "action": "wait",
+      "ms": 2500
+    }
+  ]
+}
