@@ -1,0 +1,37 @@
+{
+  "arxiv": "1707.06347",
+  "title": "Proximal Policy Optimization Algorithms",
+  "authors": [
+    "John Schulman",
+    "Filip Wolski",
+    "Prafulla Dhariwal",
+    "Alec Radford",
+    "Oleg Klimov"
+  ],
+  "year": 2017,
+  "url": "https://arxiv.org/abs/1707.06347",
+  "one_liner": "Reuse one batch for many gradient steps and watch PPO's clipping stop the policy from running away.",
+  "tags": [
+    "rl",
+    "optimization"
+  ],
+  "difficulty": "intermediate",
+  "interaction": [
+    {
+      "action": "click",
+      "selector": "#run10"
+    },
+    {
+      "action": "wait",
+      "ms": 900
+    },
+    {
+      "action": "click",
+      "selector": "#run10"
+    },
+    {
+      "action": "wait",
+      "ms": 900
+    }
+  ]
+}
