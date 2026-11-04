@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Proximal Policy Optimization Algorithms · Paper → Playground</title>
+  <meta name="description" content="Reuse one batch for many gradient steps and watch PPO's clipping stop the policy from running away.">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="../_shared/demo.css">
+  <script type="module" src="../_shared/demo.js"></script>
+  <style>
+    .arms { display: grid; gap: 8px; }
+    .arm { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 4px 10px; align-items: center; }
+    .arm .name { font-size: 13px; font-weight: 600; line-height: 1.25; }
+    .arm .name small { display: block; font-weight: 400; color: var(--muted); font-family: var(--mono); font-size: 11px; }
+    .rows { display: grid; gap: 3px; }
+    .prow { display: grid; grid-template-columns: minmax(0, 1fr) 156px; gap: 8px; align-items: center; }
+    .track { position: relative; height: 13px; background: var(--surface); border-radius: 4px; overflow: hidden; }
+    .track .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; transition: width .12s linear; }
+    .track .old { position: absolute; top: -1px; bottom: -1px; width: 2px; background: var(--text); opacity: .7; }
+    .u .fill { background: var(--bad); }
+    .c .fill { background: var(--accent-2); }
+    .prow .num { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .prow .num b { font-weight: 600; }
+    .out { color: var(--bad); }
+    .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+    .legend i { display: inline-block; width: 12px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+    .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+    .stat { background: var(--surface); border-radius: 8px; padding: 8px 10px; font-size: 13px; border-top: 3px solid var(--bad); }
+    .stat.c { border-top-color: var(--accent-2); }
+    .stat h4 { margin: 0 0 2px; font-size: 13px; }
+    .stat .readout { display: block; line-height: 1.5; }
+    @media (max-width: 420px) { .prow { grid-template-columns: minmax(0, 1fr) 132px; } .arm { grid-template-columns: 58px minmax(0, 1fr); } }
+  </style>
+</head>
+<body>
+  <header data-paper-header></header>
+  <main>
+    <section id="demo" aria-label="Interactive PPO clipping demo">
+      <div class="demo-grid">
+        <div class="panel">
+          <h3>1 · A 5-armed slot machine, one batch of 24 pulls, many gradient steps</h3>
+          <div class="legend">
+            <span><i style="background:var(--bad)"></i>Unclipped objective r·A</span>
+            <span><i style="background:var(--accent-2)"></i>PPO clipped objective</span>
+            <span><i style="background:var(--text);width:2px"></i>π<sub>old</sub> (policy that collected the batch)</span>
+          </div>
+          <div class="arms" id="arms"></div>
+          <div class="controls">
+            <button class="btn" id="run1" type="button">+1 gradient step</button>
+            <button class="btn primary" id="run10" type="button">+10 steps on same batch</button>
+            <button class="btn" id="newbatch" type="button">Collect new batch</button>
+            <button class="btn" id="reset" type="button">Reset</button>
+          </div>
+          <div class="controls" style="margin-top:8px">
+            <label>Step size <input type="range" id="lr" min="0.1" max="3" step="0.1" value="1"></label>
+            <span class="readout" id="lr-readout"></span>
+            <span class="readout" id="epoch-readout"></span>
+          </div>
+          <div class="stats">
+            <div class="stat"><h4 style="color:var(--bad)">Unclipped</h4><span class="readout" id="stat-u"></span></div>
+            <div class="stat c"><h4 style="color:var(--accent-2)">PPO clipped</h4><span class="readout" id="stat-c"></span></div>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>2 · The clipped objective, per sample</h3>
+          <div class="controls" style="margin-top:0">
+            <label>Clip range ε <input type="range" id="eps" min="0.05" max="0.5" step="0.05" value="0.2"></label>
+            <span class="readout" id="eps-readout"></span>
+          </div>
+          <canvas id="obj" aria-label="Two plots of the PPO objective against the probability ratio r. Left: advantage positive, the objective rises with r then goes flat at 1 plus epsilon. Right: advantage negative, the objective is flat below 1 minus epsilon. Numbered dots mark the current ratio of each sampled arm; hollow dots sit in the flat region and get no gradient." style="margin-top:8px"></canvas>
+          <p class="readout" id="active-readout" style="margin:6px 0 0"></p>
+          <h3 style="margin-top:12px">How far each policy moved: KL(π<sub>old</sub> ‖ π)</h3>
+          <canvas id="kl" aria-label="Line chart of the KL divergence from the batch-collecting policy after each gradient step, red for the unclipped objective and blue for PPO. Vertical lines mark new batches."></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section id="explainer">
+      <h2>The idea in 60 seconds</h2>
+      <p>In reinforcement learning, data is expensive: the agent has to act in the world to get it.
+        A policy-gradient method collects a batch of experience with the current policy, then nudges
+        the policy to make good actions (positive <strong>advantage</strong> A, better than average)
+        more likely and bad ones less likely. Ideally you would squeeze many gradient steps out of each batch.</p>
+      <p>The catch: the batch only tells you about actions near the <em>old</em> policy. The standard
+        surrogate objective <strong>r·A</strong>, where r = π<sub>new</sub>(action) / π<sub>old</sub>(action)
+        is the probability ratio, keeps rewarding you for pushing r further. Take enough steps and
+        the policy bets everything on whatever looked best in a small, noisy batch. Those
+        "destructively large" updates are why vanilla policy gradient takes one step per batch.</p>
+      <p>PPO's fix is one line: maximise <strong>min(r·A, clip(r, 1−ε, 1+ε)·A)</strong>. Once a good
+        action's ratio passes 1+ε, or a bad action's falls below 1−ε, that sample's objective goes
+        flat and stops contributing gradient. Nothing more is gained by moving further, so you
+        can safely run many epochs on the same batch. Taking the min makes it a pessimistic bound:
+        clipping only ever removes the incentive to move, never adds one.</p>
+      <p>That gives most of the stability of the earlier trust-region method TRPO, with plain
+        first-order gradient steps and a few lines of code, which is why PPO became the default RL
+        algorithm for everything from games and robots to fine-tuning language models.</p>
+      <div class="try">
+        <h3>Try this</h3>
+        <ul>
+          <li>Press <strong>+10 steps</strong> a few times. The red policy keeps piling probability onto one arm and its KL keeps climbing; the blue one stops once its ratios reach about 1±ε, and its KL levels off.</li>
+          <li>Watch panel 2: as blue ratios cross the clip line, the numbered dots turn hollow. Those samples no longer push the policy.</li>
+          <li>Slide <strong>ε</strong> from 0.05 to 0.5: the plateau moves, and so does how far PPO lets the policy move per batch.</li>
+          <li>Hit <strong>Collect new batch</strong> repeatedly (with 10+ steps each time). PPO keeps improving steadily. The unclipped run can lock onto a mediocre arm, then only ever pulls that arm and never learns better.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="simplifications">
+      <h2>How this demo simplifies the paper</h2>
+      <ul>
+        <li>The environment is a 5-armed bandit (one step, no states) with hand-set reward means and Gaussian noise, not a MuJoCo or Atari task. The policy is just 5 logits, not a neural network.</li>
+        <li>The advantage is the reward minus the batch mean, divided by the batch standard deviation. The paper estimates advantages over multi-step episodes with a learned value function and generalized advantage estimation (GAE).</li>
+        <li>Each "gradient step" is one plain full-batch gradient ascent step. The paper uses Adam on minibatches for K epochs, and adds a value-function loss and an entropy bonus to the objective.</li>
+        <li>Both runs see exactly the same samples (same random numbers), so the only difference between red and blue is the clipping. The red "unclipped" curve is the paper's no-clipping baseline in spirit; its benchmark numbers are not reproduced here.</li>
+        <li>Clipping does not strictly cap the ratio. A ratio can still drift past 1±ε through the shared softmax, as you can sometimes see here. That is true of real PPO too.</li>
+      </ul>
+    </section>
+  </main>
+
+  <script type="module">
+    const K = 5, BATCH = 24, NOISE = 0.7;
+    const MEANS = [0.2, 0.75, 0.4, 1.0, 0.1];
+    const $ = (id) => document.getElementById(id);
+
+    // seeded RNG so both runs can share random numbers
+    let seed = 34;
+    const rand = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 2 ** 32; };
+    const gauss = () => Math.sqrt(-2 * Math.log(1 - rand())) * Math.cos(2 * Math.PI * rand());
+
+    const softmax = (z) => { const m = Math.max(...z); const e = z.map((v) => Math.exp(v - m)); const s = e.reduce((a, b) => a + b, 0); return e.map((v) => v / s); };
+    const klDiv = (p, q) => p.reduce((s, pi, i) => s + (pi > 0 ? pi * Math.log(pi / Math.max(q[i], 1e-12)) : 0), 0);
+
+    let eps = 0.2, lr = 1;
+    // a run = { theta, oldProbs, batch: [{a, A}], history }
+    let runs, history, epochs, iteration;
+
+    function sampleBatch(probs, us, noises) {
+      const acts = us.map((u) => { let c = 0; for (let k = 0; k < K; k++) { c += probs[k]; if (u < c) return k; } return K - 1; });
+      const R = acts.map((a, i) => MEANS[a] + NOISE * noises[i]);
+      const mean = R.reduce((a, b) => a + b, 0) / R.length;
+      const sd = Math.sqrt(R.reduce((s, r) => s + (r - mean) ** 2, 0) / R.length) || 1;
+      return acts.map((a, i) => ({ a, R: R[i], A: (R[i] - mean) / sd }));
+    }
+    function collect() {
+      const us = Array.from({ length: BATCH }, rand), noises = Array.from({ length: BATCH }, gauss);
+      for (const run of Object.values(runs)) {
+        run.oldProbs = softmax(run.theta);
+        run.batch = sampleBatch(run.oldProbs, us, noises);
+      }
+      epochs = 0;
+      iteration++;
+      history.push({ u: 0, c: 0, mark: true });
+    }
+    function reset() {
+      seed = 34;
+      runs = { u: { theta: new Array(K).fill(0), clip: false }, c: { theta: new Array(K).fill(0), clip: true } };
+      history = []; iteration = 0;
+      collect();
+    }
+
+    // one full-batch gradient ascent step on the (clipped) surrogate
+    function step(run) {
+      const p = softmax(run.theta), g = new Array(K).fill(0);
+      for (const { a, A } of run.batch) {
+        const r = p[a] / run.oldProbs[a];
+        if (run.clip && ((A > 0 && r > 1 + eps) || (A < 0 && r < 1 - eps))) continue; // flat: zero gradient
+        // d r / d theta_k = (p[a] / old[a]) * (1[k=a] - p[k])
+        for (let k = 0; k < K; k++) g[k] += A * r * ((k === a ? 1 : 0) - p[k]);
+      }
+      for (let k = 0; k < K; k++) run.theta[k] += (lr * g[k]) / run.batch.length;
+    }
+    function objective(run) {
+      const p = softmax(run.theta);
+      return run.batch.reduce((s, { a, A }) => {
+        const r = p[a] / run.oldProbs[a];
+        return s + (run.clip ? Math.min(r * A, Math.min(Math.max(r, 1 - eps), 1 + eps) * A) : r * A);
+      }, 0) / run.batch.length;
+    }
+    function gradStep() {
+      step(runs.u); step(runs.c); epochs++;
+      history.push({ u: klDiv(runs.u.oldProbs, softmax(runs.u.theta)), c: klDiv(runs.c.oldProbs, softmax(runs.c.theta)) });
+      if (history.length > 240) history.splice(0, history.length - 240);
+    }
+
+    // queue steps so +10 animates over a few frames instead of blocking
+    let pending = 0;
+    function pump() {
+      if (pending > 0) { gradStep(); pending--; render(); }
+      if (pending > 0) requestAnimationFrame(pump);
+    }
+    const queue = (n) => { const idle = pending === 0; pending += n; if (idle) requestAnimationFrame(pump); };
+
+    // ---- rendering ----
+    function armRows() {
+      const pu = softmax(runs.u.theta), pc = softmax(runs.c.theta);
+      const info = (run, k) => {
+        const s = run.batch.filter((b) => b.a === k);
+        if (!s.length) return "0 pulls";
+        const mA = s.reduce((t, b) => t + b.A, 0) / s.length;
+        return `${s.length}× Ā${mA >= -0.05 ? "+" : "−"}${Math.abs(mA).toFixed(1)}`;
+      };
+      const row = (cls, run, p, k) => {
+        const r = p[k] / run.oldProbs[k];
+        const out = r > 1 + eps + 1e-9 || r < 1 - eps - 1e-9;
+        return `<div class="prow ${cls}"><div class="track"><div class="fill" style="width:${(p[k] * 100).toFixed(1)}%"></div>
+          <div class="old" style="left:calc(${(run.oldProbs[k] * 100).toFixed(1)}% - 1px)"></div></div>
+          <span class="num">${(p[k] * 100).toFixed(0).padStart(3)}% <b class="${out ? "out" : ""}">r=${r.toFixed(2)}</b> · ${info(run, k)}</span></div>`;
+      };
+      $("arms").innerHTML = MEANS.map((m, k) => `<div class="arm"><div class="name">Arm ${k + 1}<small>mean ${m.toFixed(2)}</small></div>
+        <div class="rows">${row("u", runs.u, pu, k)}${row("c", runs.c, pc, k)}</div></div>`).join("");
+      const stat = (run, p) => {
+        const r = p.map((v, k) => v / run.oldProbs[k]);
+        const exp = p.reduce((s, v, k) => s + v * MEANS[k], 0);
+        return `KL from π_old ${klDiv(run.oldProbs, p).toFixed(3)}<br>ratio range ${Math.min(...r).toFixed(2)}–${Math.max(...r).toFixed(2)}<br>surrogate ${(Math.abs(objective(run)) < 5e-4 ? 0 : objective(run)).toFixed(3)}<br>true avg reward <b>${exp.toFixed(3)}</b>`;
+      };
+      $("stat-u").innerHTML = stat(runs.u, pu);
+      $("stat-c").innerHTML = stat(runs.c, pc);
+      $("epoch-readout").textContent = `batch #${iteration} · ${epochs} steps on it`;
+    }
+
+    let octx, OW = 0, OH = 0, kctx, KW = 0, KH = 0;
+    function resize() {
+      const w = Math.max(240, $("obj").parentElement.clientWidth - 24);
+      OW = w; OH = Math.round(Math.min(210, Math.max(160, w * 0.42)));
+      octx = Demo.hiDPI($("obj"), OW, OH);
+      KW = w; KH = 130;
+      kctx = Demo.hiDPI($("kl"), KW, KH);
+      render();
+    }
+
+    function drawObjective() {
+      const ctx = octx, c = Demo.color;
+      ctx.clearRect(0, 0, OW, OH);
+      const gap = 14, pw = (OW - gap) / 2, R_MAX = 2.4;
+      const pc = softmax(runs.c.theta), pu = softmax(runs.u.theta);
+      let active = 0;
+      [1, -1].forEach((sign, pi) => {
+        const x0 = pi * (pw + gap), top = 18, bot = OH - 20, h = bot - top;
+        // y range: L/|A| in [-2.4, 2.4] mapped per panel
+        const yMin = sign > 0 ? 0 : -R_MAX, yMax = sign > 0 ? R_MAX : 0;
+        const X = (r) => x0 + 6 + (r / R_MAX) * (pw - 12);
+        const Y = (v) => bot - ((v - yMin) / (yMax - yMin)) * h;
+        ctx.fillStyle = c("--surface"); ctx.fillRect(x0, top, pw, h);
+        // clip band
+        ctx.fillStyle = c("--accent-2"); ctx.globalAlpha = 0.1;
+        ctx.fillRect(X(1 - eps), top, X(1 + eps) - X(1 - eps), h); ctx.globalAlpha = 1;
+        ctx.strokeStyle = c("--border"); ctx.lineWidth = 1; ctx.beginPath();
+        ctx.moveTo(X(1), top); ctx.lineTo(X(1), bot); ctx.stroke();
+        // unclipped r*A (dashed)
+        ctx.setLineDash([4, 4]); ctx.strokeStyle = c("--bad"); ctx.lineWidth = 1.5; ctx.beginPath();
+        ctx.moveTo(X(0), Y(0)); ctx.lineTo(X(R_MAX), Y(sign * R_MAX)); ctx.stroke(); ctx.setLineDash([]);
+        // clipped objective
+        const L = (r) => Math.min(r * sign, Math.min(Math.max(r, 1 - eps), 1 + eps) * sign);
+        ctx.strokeStyle = c("--accent-2"); ctx.lineWidth = 3; ctx.beginPath();
+        for (let i = 0; i <= 120; i++) { const r = (i / 120) * R_MAX; i ? ctx.lineTo(X(r), Y(L(r))) : ctx.moveTo(X(r), Y(L(r))); }
+        ctx.stroke();
+        // labels
+        ctx.fillStyle = c("--text"); ctx.font = "600 12px system-ui";
+        const wide = pw > 200;
+        ctx.fillText(sign > 0 ? (wide ? "A > 0 (better than average)" : "A > 0 (good)") : (wide ? "A < 0 (worse than average)" : "A < 0 (bad)"), x0 + 2, 12);
+        ctx.fillStyle = c("--muted"); ctx.font = "11px system-ui";
+        ctx.fillText(wide ? "r = π/π_old →" : "r →", x0 + pw - (wide ? 76 : 20), OH - 5);
+        ctx.fillText("0", X(0) - 3, OH - 5);
+        ctx.fillText("1", X(1) - 3, OH - 5);
+        ctx.fillText(`1−ε`, X(1 - eps) - 12, bot - 4);
+        ctx.fillText(`1+ε`, X(1 + eps) + 2, bot - 4);
+        // unclipped run's arms (small red ticks on the dashed line)
+        const seenU = new Set();
+        for (const { a, A } of runs.u.batch) {
+          if (Math.sign(A) !== sign || seenU.has(a)) continue; seenU.add(a);
+          const r = Math.min(R_MAX, pu[a] / runs.u.oldProbs[a]);
+          ctx.fillStyle = c("--bad"); ctx.beginPath(); ctx.arc(X(r), Y(sign * r), 3.5, 0, 7); ctx.fill();
+        }
+        // clipped run's arms (numbered dots)
+        const seen = new Map(), placed = [];
+        for (const { a, A } of runs.c.batch) {
+          if (Math.sign(A) !== sign) continue;
+          const r = pc[a] / runs.c.oldProbs[a];
+          const flat = (A > 0 && r > 1 + eps) || (A < 0 && r < 1 - eps);
+          if (!flat) active++;
+          if (seen.has(a)) continue; seen.set(a, 1);
+          const rx = Math.min(R_MAX, r), x = X(rx), y0 = Y(L(rx));
+          let y = y0;
+          for (let j = 1; placed.some(([px, py]) => Math.hypot(px - x, py - y) < 15); j++) y = y0 + (j % 2 ? -1 : 1) * Math.ceil(j / 2) * 15;
+          placed.push([x, y]);
+          if (y !== y0) { ctx.strokeStyle = c("--accent-2"); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y); ctx.stroke(); }
+          ctx.beginPath(); ctx.arc(x, y, 7, 0, 7);
+          ctx.fillStyle = flat ? c("--surface") : c("--accent-2"); ctx.fill();
+          ctx.strokeStyle = c("--accent-2"); ctx.lineWidth = 2; ctx.stroke();
+          ctx.fillStyle = flat ? c("--accent-2") : "#fff"; ctx.font = "600 10px system-ui";
+          ctx.fillText(String(a + 1), x - 3, y + 3.5);
+        }
+      });
+      $("active-readout").textContent = `PPO: ${active} of ${runs.c.batch.length} samples still push the policy (solid dots); the rest are clipped (hollow).`;
+    }
+
+    function drawKL() {
+      const ctx = kctx, c = Demo.color;
+      ctx.clearRect(0, 0, KW, KH);
+      ctx.fillStyle = c("--surface"); ctx.fillRect(0, 0, KW, KH);
+      const top = 8, bot = KH - 16, left = 34, right = KW - 6;
+      const maxV = Math.max(0.05, ...history.map((h) => Math.max(h.u, h.c))) * 1.1;
+      const n = Math.max(30, history.length - 1);
+      const X = (i) => left + (i / n) * (right - left), Y = (v) => bot - (v / maxV) * (bot - top);
+      ctx.fillStyle = c("--muted"); ctx.font = "10px system-ui";
+      ctx.fillText(maxV.toFixed(2), 2, top + 8); ctx.fillText("0", 22, bot);
+      ctx.fillText("gradient steps →", right - 84, KH - 3);
+      history.forEach((h, i) => {
+        if (!h.mark || i === 0) return;
+        ctx.strokeStyle = c("--border"); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(X(i), top); ctx.lineTo(X(i), bot); ctx.stroke();
+      });
+      for (const [key, col] of [["u", "--bad"], ["c", "--accent-2"]]) {
+        ctx.strokeStyle = c(col); ctx.lineWidth = 2; ctx.beginPath();
+        history.forEach((h, i) => (h.mark ? ctx.moveTo(X(i), Y(h[key])) : ctx.lineTo(X(i), Y(h[key]))));
+        ctx.stroke();
+      }
+    }
+
+    function render() {
+      $("eps-readout").textContent = `ε = ${eps.toFixed(2)} → ratios kept in [${(1 - eps).toFixed(2)}, ${(1 + eps).toFixed(2)}]`;
+      $("lr-readout").textContent = lr.toFixed(1);
+      armRows();
+      if (octx) { drawObjective(); drawKL(); }
+    }
+
+    $("run1").addEventListener("click", () => queue(1));
+    $("run10").addEventListener("click", () => queue(10));
+    $("newbatch").addEventListener("click", () => { pending = 0; collect(); render(); });
+    $("reset").addEventListener("click", () => { pending = 0; reset(); render(); });
+    $("eps").addEventListener("input", (e) => { eps = Number(e.target.value); render(); });
+    $("lr").addEventListener("input", (e) => { lr = Number(e.target.value); render(); });
+
+    reset();
+    addEventListener("resize", resize);
+    Demo.onTheme(resize);
+  </script>
+</body>
+</html>
