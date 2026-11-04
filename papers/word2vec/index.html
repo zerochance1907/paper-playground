@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Efficient Estimation of Word Representations in Vector Space · Paper → Playground</title>
+  <meta name="description" content="Train skip-gram word vectors on a tiny corpus in your browser, then do arithmetic like king − man + woman.">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="../_shared/demo.css">
+  <script type="module" src="../_shared/demo.js"></script>
+  <style>
+    .analogy { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 15px; }
+    .analogy .op { font-family: var(--mono); color: var(--muted); }
+    select { font: inherit; font-size: 14px; padding: 5px 6px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+    .presets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .presets .btn { font-size: 12px; padding: 4px 9px; }
+    .results { display: grid; gap: 4px; margin-top: 10px; }
+    .res { display: grid; grid-template-columns: 76px 1fr 42px; gap: 8px; align-items: center; font-size: 14px; }
+    .res .track { background: var(--surface); border-radius: 4px; height: 14px; overflow: hidden; }
+    .res .fill { height: 100%; background: var(--accent); }
+    .res .num { font-family: var(--mono); font-size: 12px; color: var(--muted); text-align: right; }
+    .res.top span:first-child { font-weight: 700; }
+    .corpus { font-family: var(--mono); font-size: 12px; color: var(--muted); background: var(--surface); border-radius: 6px; padding: 8px 10px; margin: 6px 0 0; line-height: 1.6; min-height: 5.2em; overflow-wrap: anywhere; }
+    .corpus b { color: var(--accent); font-weight: 600; }
+    .corpus u { text-decoration: none; color: var(--accent-2); font-weight: 600; }
+    .verdict { font-size: 13px; margin: 6px 0 0; min-height: 1.4em; }
+  </style>
+</head>
+<body>
+  <header data-paper-header></header>
+  <main>
+    <section id="demo" aria-label="Interactive word2vec demo">
+      <div class="demo-grid">
+        <div class="panel">
+          <h3 id="map-title">1 · Word vectors, projected from 10D to 2D</h3>
+          <canvas id="space" aria-label="Scatter plot of word vectors projected to two dimensions with PCA. People words and place words are labelled. Arrows show the current analogy: the offset from the first word to the second, and the same offset applied to the third word."></canvas>
+          <div class="controls">
+            <button class="btn primary" id="train" type="button">▶ Train skip-gram</button>
+            <button class="btn" id="reset" type="button">Reset to random vectors</button>
+            <span class="readout" id="progress"></span>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>2 · Vector arithmetic</h3>
+          <div class="analogy">
+            <select id="wa" aria-label="First word"></select><span class="op">−</span>
+            <select id="wb" aria-label="Word to subtract"></select><span class="op">+</span>
+            <select id="wc" aria-label="Word to add"></select><span class="op">≈ ?</span>
+          </div>
+          <div class="presets" id="presets"></div>
+          <div class="results" id="results"></div>
+          <p class="verdict" id="verdict"></p>
+          <h3 style="margin-top:12px">Training text (skip-gram: predict neighbours from the <span style="color:var(--accent)">centre word</span>)</h3>
+          <div class="corpus" id="corpus"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="explainer">
+      <h2>The idea in 60 seconds</h2>
+      <p>"You shall know a word by the company it keeps" (J. R. Firth, 1957). Words that show up in similar
+        contexts tend to mean similar things. word2vec turns that into numbers: every word
+        gets a vector, and the vectors are trained so that a word's vector is good at
+        <strong>predicting the words around it</strong>.</p>
+      <p>The paper proposes two very simple models. <strong>Skip-gram</strong> (shown here)
+        takes one word and tries to guess each neighbour within a small window. <strong>CBOW</strong>
+        does the reverse: it guesses the middle word from its neighbours. There is no non-linear hidden
+        layer, just a lookup of the word's vector and a dot product with every candidate. That
+        simplicity is the point: it is cheap enough to train on billions of words.</p>
+      <p>Something surprising falls out. Because "king" and "queen" share the royal contexts
+        (<em>throne, crown, palace</em>) but differ in exactly the way "man" and "woman" differ
+        (<em>he</em> vs <em>she</em>), the vectors end up with a consistent "gender direction" and a
+        consistent "royalty direction". So <strong>king − man + woman</strong> lands next to
+        <strong>queen</strong>. Relationships become directions you can add and subtract.</p>
+      <p>The paper measured this on 19,544 analogy questions (semantic ones like
+        capital–country, and syntactic ones like <em>big : biggest</em>), and showed the simple
+        models beat earlier neural language models while training in a fraction of the time.</p>
+      <div class="try">
+        <h3>Try this</h3>
+        <ul>
+          <li>Before training, try <strong>king − man + woman</strong>: the answer is random, because the vectors are random. Press <strong>Train</strong> and watch the answer settle on <em>queen</em>.</li>
+          <li>Watch the 2D map while it trains: the words start as a random jumble, then arrange themselves so that the dashed arrow (man → king) and the solid one (woman → ?) become parallel and the solid one ends on <em>queen</em>.</li>
+          <li>Try <strong>paris − france + italy</strong>, then make up your own: <em>prince − boy + girl</em>, <em>tokyo − japan + spain</em>, <em>woman − man + boy</em>.</li>
+          <li>Ask something the corpus never supports, like <strong>paris − france + king</strong>. The best match has a much lower similarity: there's no consistent direction to follow.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="simplifications">
+      <h2>How this demo simplifies the paper</h2>
+      <ul>
+        <li>The corpus is about 1,500 short sentences generated from templates in this page, with an 89-word vocabulary. It was built on purpose so that gender, royalty, age and capital-of relationships each have their own consistent contexts. The paper trained on a 6-billion-word Google News corpus with a 1-million-word vocabulary, where these regularities have to emerge from messy real text.</li>
+        <li>Vectors have 10 dimensions instead of the paper's hundreds (up to 1,000), and the plot is a PCA projection down to 2D of just the words in your question's group (the 8 people, or the 10 places). The analogy search uses the full 10D vectors, as in the paper (cosine similarity, excluding the three input words).</li>
+        <li>We compute a full softmax over all 89 words for each prediction. The paper used hierarchical softmax (a Huffman tree) so cost grows with log(vocabulary) instead. With 89 words the full softmax is cheap and gives the same kind of vectors. Negative sampling, the other popular trick, came in a follow-up paper.</li>
+        <li>Plain SGD with a learning rate decaying linearly to near zero, a fixed window of 2 words, no subsampling of frequent words. Training runs live in your browser and takes a few seconds.</li>
+        <li>Only skip-gram is shown. The paper's CBOW model and its comparisons with older neural language models are not reproduced.</li>
+      </ul>
+    </section>
+  </main>
+
+  <script type="module">
+    function rng(seed) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 2 ** 32; }; }
+    const pick = (r, a) => a[(r() * a.length) | 0];
+
+    // ---------- tiny template corpus ----------
+    // Each person word has a gender, a rank and an age; each sentence mentions one of those facets.
+    const PEOPLE = [["king", "m", "royal", "adult"], ["queen", "f", "royal", "adult"], ["man", "m", "common", "adult"], ["woman", "f", "common", "adult"],
+      ["prince", "m", "royal", "young"], ["princess", "f", "royal", "young"], ["boy", "m", "common", "young"], ["girl", "f", "common", "young"]];
+    const PLACES = [["paris", "france", "french"], ["rome", "italy", "italian"], ["berlin", "germany", "german"], ["tokyo", "japan", "japanese"], ["madrid", "spain", "spanish"]];
+    function makeCorpus(n, seed) {
+      const r = rng(seed), S = [];
+      for (let i = 0; i < n; i++) {
+        if (r() < 0.6) {
+          const [w, g, rank, age] = pick(r, PEOPLE), he = g === "m" ? "he" : "she", his = g === "m" ? "his" : "her", k = (r() * 3) | 0;
+          if (k === 0) S.push(pick(r, [`${he} is the ${w}`, `the ${w} and ${his} horse`, `${his} name is ${w}`, `the ${w} said ${he} was tired`]));
+          else if (k === 1) S.push(rank === "royal"
+            ? pick(r, [`the ${w} rules the kingdom`, `the ${w} sits on the throne`, `the ${w} wears a crown`, `the ${w} lives in the palace`])
+            : pick(r, [`the ${w} works on the farm`, `the ${w} lives in the village`, `the ${w} sells bread at the market`, `the ${w} walks to work`]));
+          else S.push(age === "adult"
+            ? pick(r, [`the ${w} reads the news`, `the ${w} pays the tax`, `the ${w} drinks coffee`, `the old ${w} remembers`])
+            : pick(r, [`the ${w} plays with toys`, `the young ${w} goes to school`, `the ${w} is a child`, `the little ${w} laughs`]));
+        } else {
+          const [city, country, lang] = pick(r, PLACES), isCity = r() < 0.5, x = isCity ? city : country, t = (r() * 3) | 0;
+          if (t === 0) S.push(`people in ${x} speak ${lang}`);
+          else if (t === 1) S.push(isCity
+            ? pick(r, [`${x} is a big city`, `the mayor of ${x}`, `the streets of ${x} are busy`, `take the metro in ${x}`])
+            : pick(r, [`${x} is a country`, `the president of ${x}`, `the border of ${x}`, `${x} is a nation`]));
+          else S.push(`${city} is the capital of ${country}`);
+        }
+      }
+      return S.map((s) => s.split(" "));
+    }
+    const SENTS = makeCorpus(1500, 1);
+    const VOCAB = [...new Set(SENTS.flat())], V = VOCAB.length, ID = Object.fromEntries(VOCAB.map((w, i) => [w, i]));
+    const SHOWN = [...PEOPLE.map((p) => p[0]), ...PLACES.flatMap((p) => [p[0], p[1]])];
+    const IS_PERSON = new Set(PEOPLE.map((p) => p[0]));
+    const WIN = 2, D = 10;
+    // (centre, context, sentence index, centre position, context position) training pairs
+    const PAIRS = [];
+    SENTS.forEach((s, si) => s.forEach((w, i) => {
+      for (let j = Math.max(0, i - WIN); j <= Math.min(s.length - 1, i + WIN); j++) if (j !== i) PAIRS.push([ID[w], ID[s[j]], si, i, j]);
+    }));
+    const TOTAL = 320000, LR0 = 0.05, LR_MIN = 0.001, PER_FRAME = 1000;
+
+    // ---------- skip-gram with a full softmax ----------
+    let Win, Wout, done = 0, running = false, lossEma = Math.log(V), lastPair = null, rTrain;
+    const scores = new Float64Array(V), gh = new Float64Array(D);
+    function init() {
+      const r = rng(3);
+      Win = Float64Array.from({ length: V * D }, () => (r() - 0.5) / D);  // input vectors: the word embeddings
+      Wout = new Float64Array(V * D);                                      // output vectors used to score context words
+      rTrain = rng(11); done = 0; lossEma = Math.log(V);
+    }
+    function trainPair(c, o, lr) {
+      const h = c * D; let m = -Infinity;
+      for (let v = 0; v < V; v++) { let s = 0; const k = v * D; for (let d = 0; d < D; d++) s += Win[h + d] * Wout[k + d]; scores[v] = s; if (s > m) m = s; }
+      let Z = 0;
+      for (let v = 0; v < V; v++) { scores[v] = Math.exp(scores[v] - m); Z += scores[v]; }
+      const loss = -Math.log(scores[o] / Z);
+      gh.fill(0);
+      for (let v = 0; v < V; v++) {
+        const g = scores[v] / Z - (v === o ? 1 : 0), k = v * D;   // d(loss)/d(score_v)
+        for (let d = 0; d < D; d++) { gh[d] += g * Wout[k + d]; Wout[k + d] -= lr * g * Win[h + d]; }
+      }
+      for (let d = 0; d < D; d++) Win[h + d] -= lr * gh[d];
+      return loss;
+    }
+
+    // ---------- vector helpers ----------
+    const vec = (w) => Win.subarray(ID[w] * D, ID[w] * D + D);
+    const norm = (a) => Math.sqrt(a.reduce((s, v) => s + v * v, 0));
+    function analogy(a, b, c) {
+      const q = Array.from({ length: D }, (_, d) => vec(a)[d] - vec(b)[d] + vec(c)[d]), nq = norm(q);
+      return VOCAB.filter((w) => w !== a && w !== b && w !== c)
+        .map((w) => { const v = vec(w); return [w, q.reduce((s, x, d) => s + x * v[d], 0) / (nq * norm(v) + 1e-12)]; })
+        .sort((x, y) => y[1] - x[1]).slice(0, 4);
+    }
+
+    // PCA of the shown words to 2D (power iteration with deflation); signs kept stable between frames
+    let axes = null;
+    let axesKey = "";
+    function pca(words) {
+      if (words.join() !== axesKey) { axes = null; axesKey = words.join(); }
+      const X = words.map((w) => Array.from(vec(w))), mean = Array(D).fill(0);
+      X.forEach((x) => x.forEach((v, d) => (mean[d] += v / X.length)));
+      const Xc = X.map((x) => x.map((v, d) => v - mean[d]));
+      const C = Array.from({ length: D }, (_, i) => Array.from({ length: D }, (_, j) => Xc.reduce((s, x) => s + x[i] * x[j], 0)));
+      const comps = [];
+      for (let k = 0; k < 2; k++) {
+        let u = axes ? [...axes[k]] : Array.from({ length: D }, (_, i) => Math.sin(i * 1.7 + k + 1));
+        for (let it = 0; it < 40; it++) {
+          let nu = C.map((row) => row.reduce((s, v, j) => s + v * u[j], 0));
+          for (const p of comps) { const dp = nu.reduce((s, v, i) => s + v * p[i], 0); nu = nu.map((v, i) => v - dp * p[i]); }
+          const n = norm(nu) || 1; u = nu.map((v) => v / n);
+        }
+        if (axes && u.reduce((s, v, i) => s + v * axes[k][i], 0) < 0) u = u.map((v) => -v);
+        comps.push(u);
+      }
+      axes = comps;
+      const proj = (x) => comps.map((p) => x.reduce((s, v, d) => s + (v - mean[d]) * p[d], 0));
+      return { proj, pts: Object.fromEntries(words.map((w) => [w, proj(Array.from(vec(w)))])) };
+    }
+
+    // ---------- UI ----------
+    const sel = ["wa", "wb", "wc"].map((id) => document.getElementById(id));
+    const choices = [...SHOWN].sort();
+    sel.forEach((s) => (s.innerHTML = choices.map((w) => `<option>${w}</option>`).join("")));
+    const PRESETS = [["king", "man", "woman"], ["paris", "france", "italy"], ["prince", "boy", "girl"], ["tokyo", "japan", "spain"]];
+    const EXPECT = { "king,man,woman": "queen", "paris,france,italy": "rome", "prince,boy,girl": "princess", "tokyo,japan,spain": "madrid" };
+    document.getElementById("presets").innerHTML = PRESETS.map((p, i) =>
+      `<button class="btn" type="button" data-i="${i}">${p[0]} − ${p[1]} + ${p[2]}</button>`).join("");
+    document.getElementById("presets").addEventListener("click", (e) => {
+      const i = e.target.closest("button")?.dataset.i; if (i === undefined) return;
+      PRESETS[i].forEach((w, k) => (sel[k].value = w)); draw();
+    });
+    sel.forEach((s) => s.addEventListener("change", draw));
+    const setQuery = (q) => q.forEach((w, k) => (sel[k].value = w));
+    setQuery(PRESETS[0]);
+
+    function renderAnalogy() {
+      const [a, b, c] = sel.map((s) => s.value);
+      const res = analogy(a, b, c);
+      document.getElementById("results").innerHTML = res.map(([w, s], i) => `
+        <div class="res${i === 0 ? " top" : ""}"><span>${w}</span>
+          <div class="track"><div class="fill" style="width:${Math.max(0, s * 100).toFixed(1)}%;opacity:${i === 0 ? 1 : 0.45}"></div></div>
+          <span class="num">${s.toFixed(2)}</span></div>`).join("");
+      const exp = EXPECT[[a, b, c].join(",")];
+      const v = document.getElementById("verdict");
+      if (exp) {
+        const ok = res[0][0] === exp;
+        v.innerHTML = ok ? `<span style="color:var(--good)">✓ ${exp}</span>, as the paper's analogy test would hope.`
+          : `<span style="color:var(--bad)">✗ not ${exp} (yet)</span>${done ? "" : ". The vectors are still random: press Train."}`;
+      } else v.textContent = "cosine similarity to " + `${a} − ${b} + ${c}`;
+      return res[0][0];
+    }
+
+    function renderCorpus() {
+      const el = document.getElementById("corpus");
+      if (!lastPair) {
+        el.innerHTML = SENTS.slice(0, 4).map((s) => s.join(" ")).join("<br>") + "<br>…";
+        return;
+      }
+      const [, , si, ci, oi] = lastPair;
+      el.innerHTML = SENTS[si].map((w, i) => (i === ci ? `<b>${w}</b>` : i === oi ? `<u>${w}</u>` : w)).join(" ") +
+        `<br>centre <b>${SENTS[si][ci]}</b> → predict <u>${SENTS[si][oi]}</u> (window ±${WIN})<br>` +
+        `${SENTS.length.toLocaleString()} sentences · ${SENTS.flat().length.toLocaleString()} words · ${V} distinct words`;
+    }
+
+    // ---------- canvas ----------
+    const cv = document.getElementById("space");
+    let ctx, W = 0, H = 0;
+    const c = (n) => Demo.color(n);
+    function resize() {
+      W = Math.max(260, cv.parentElement.clientWidth - 24);
+      H = Math.round(Math.min(400, W * 0.78));
+      ctx = Demo.hiDPI(cv, W, H);
+      draw();
+    }
+    // text label to the right of a point, flipped to the left if it would run off the canvas
+    function label(text, x, y, dy) {
+      const w = ctx.measureText(text).width;
+      ctx.fillText(text, x + 8 + w > W - 2 ? x - 8 - w : x + 8, y + dy);
+    }
+    function arrow(x0, y0, x1, y1, color, dashed) {
+      ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 2.5; ctx.setLineDash(dashed ? [6, 4] : []);
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke(); ctx.setLineDash([]);
+      const a = Math.atan2(y1 - y0, x1 - x0);
+      ctx.beginPath(); ctx.moveTo(x1, y1);
+      ctx.lineTo(x1 - 10 * Math.cos(a - 0.4), y1 - 10 * Math.sin(a - 0.4));
+      ctx.lineTo(x1 - 10 * Math.cos(a + 0.4), y1 - 10 * Math.sin(a + 0.4)); ctx.fill();
+    }
+    function draw() {
+      if (!ctx) return;
+      const top = renderAnalogy();
+      renderCorpus();
+      const [a, b, cc] = sel.map((s) => s.value);
+      // Project the group the question is about, so its structure gets the whole plot.
+      const group = [a, b, cc].every((w) => IS_PERSON.has(w)) ? "people" : [a, b, cc].every((w) => !IS_PERSON.has(w)) ? "places" : "all";
+      const words = group === "people" ? SHOWN.filter((w) => IS_PERSON.has(w)) : group === "places" ? SHOWN.filter((w) => !IS_PERSON.has(w)) : SHOWN;
+      const { pts, proj } = pca(words);
+      document.getElementById("map-title").textContent =
+        `1 · ${group === "all" ? "People and place" : group === "people" ? "People" : "Place"} word vectors, projected from 10D to 2D`;
+      const target = proj(Array.from({ length: D }, (_, d) => vec(a)[d] - vec(b)[d] + vec(cc)[d]));
+      const all = [...Object.values(pts), target];
+      const span = Math.max(1e-6, ...all.map((p) => Math.max(Math.abs(p[0]), Math.abs(p[1]))));
+      const pad = 34, sx = (W / 2 - pad) / span, sy = (H / 2 - pad) / span;
+      const P = ([x, y]) => [W / 2 + x * sx, H / 2 - y * sy];
+      ctx.clearRect(0, 0, W, H);
+      ctx.strokeStyle = c("--border"); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0, H / 2); ctx.lineTo(W, H / 2); ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.stroke();
+      // analogy arrows: b -> a, and cc -> (a - b + cc). Parallel arrows = a consistent direction.
+      const [bx, by] = P(pts[b]), [ax, ay] = P(pts[a]), [cx, cy] = P(pts[cc]), [tx, ty] = P(target);
+      arrow(bx, by, ax, ay, c("--accent-2"), true);
+      arrow(cx, cy, tx, ty, c("--accent"), false);
+      ctx.beginPath(); ctx.arc(tx, ty, 7, 0, Math.PI * 2); ctx.strokeStyle = c("--accent"); ctx.lineWidth = 2; ctx.stroke();
+      ctx.font = "12px system-ui"; ctx.fillStyle = c("--accent");
+      label(`${a} − ${b} + ${cc}`, tx, ty, 16);
+      // words
+      for (const w of words) {
+        const [x, y] = P(pts[w]), active = w === a || w === b || w === cc, hit = w === top;
+        ctx.beginPath(); ctx.arc(x, y, hit ? 6 : 4.5, 0, Math.PI * 2);
+        ctx.fillStyle = IS_PERSON.has(w) ? c("--text") : c("--muted"); ctx.fill();
+        ctx.font = `${active || hit ? 700 : 500} 13px system-ui`;
+        ctx.fillStyle = hit ? c("--accent") : active ? c("--text") : IS_PERSON.has(w) ? c("--text") : c("--muted");
+        label(w, x, y, -6);
+      }
+      document.getElementById("progress").textContent =
+        `${Math.round((100 * done) / TOTAL)}% · ${(done / 1000).toFixed(0)}k word pairs · loss ${lossEma.toFixed(2)}`;
+    }
+
+    function tick() {
+      if (!running) return;
+      const t0 = performance.now();
+      for (let k = 0; k < PER_FRAME && done < TOTAL; k++) {
+        if ((k & 63) === 0 && performance.now() - t0 > 14) break;
+        const pair = PAIRS[(rTrain() * PAIRS.length) | 0];
+        const lr = LR0 * (1 - done / TOTAL) + LR_MIN;   // linear decay, as in the paper
+        lossEma = 0.999 * lossEma + 0.001 * trainPair(pair[0], pair[1], lr);
+        lastPair = pair; done++;
+      }
+      draw();
+      if (done >= TOTAL) { setRunning(false); return; }
+      requestAnimationFrame(tick);
+    }
+    const trainBtn = document.getElementById("train");
+    function setRunning(on) {
+      running = on;
+      trainBtn.textContent = on ? "❚❚ Pause" : done >= TOTAL ? "✓ Trained" : done ? "▶ Resume" : "▶ Train skip-gram";
+      if (on) requestAnimationFrame(tick);
+    }
+    trainBtn.addEventListener("click", () => { if (done < TOTAL) setRunning(!running); });
+    document.getElementById("reset").addEventListener("click", () => { init(); lastPair = null; axes = null; setRunning(false); draw(); });
+
+    addEventListener("resize", resize);
+    init();
+    Demo.onTheme(resize);
+  </script>
+</body>
+</html>
