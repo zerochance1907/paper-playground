@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NeRF · Paper → Playground</title>
+  <meta name="description" content="Move a camera through a 2D scene, inspect volume rendering along a ray, and fit a field from a few views.">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="../_shared/demo.css">
+  <script type="module" src="../_shared/demo.js"></script>
+  <style>
+    .strip-label { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted); margin: 8px 0 3px; }
+    .strip { width: 100%; height: 30px; border-radius: 4px; cursor: crosshair; }
+    .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .seg button { font: inherit; font-size: 13px; padding: 6px 11px; border: 0; background: var(--surface); color: var(--text); cursor: pointer; }
+    .seg button[aria-pressed="true"] { background: var(--accent-2); color: #fff; }
+    select { font: inherit; font-size: 14px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+    .formula { font-family: var(--mono); font-size: 12.5px; background: var(--surface); border-radius: 8px; padding: 8px 10px; margin: 8px 0 0; line-height: 1.55; }
+    .swatch { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: -2px; border: 1px solid var(--border); }
+    .key { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .key i { display: inline-block; width: 14px; height: 3px; vertical-align: 3px; margin-right: 5px; }
+  </style>
+</head>
+<body>
+  <header data-paper-header></header>
+  <main>
+    <section id="demo" aria-label="Interactive 2D neural radiance field demo">
+      <div class="demo-grid">
+        <div class="panel">
+          <h3>1 · A 2D world seen from above. Drag (or tap) to move your camera</h3>
+          <canvas id="scene" aria-label="Top-down view of a 2D scene with an orange disc, a blue square and a faint green fog. Small grey triangles around it are the training cameras. The large orange triangle is your camera; its rays fan into the scene and the selected ray shows its sample points, larger where they contribute more to the pixel."></canvas>
+          <div class="controls" style="margin-top:8px">
+            <span class="seg" role="group" aria-label="What the top-down view shows">
+              <button type="button" id="show-true" aria-pressed="true">True scene</button>
+              <button type="button" id="show-learned" aria-pressed="false">Learned field</button>
+            </span>
+            <span class="readout" id="cam-readout"></span>
+          </div>
+          <div class="strip-label"><span>What your camera sees: true scene</span><span id="sel-readout"></span></div>
+          <canvas class="strip" id="strip-true" aria-label="One-dimensional image your camera sees of the true scene. Tap to pick a pixel."></canvas>
+          <div class="strip-label"><span>Rendered from the learned field (a novel view: it never trains on your camera)</span></div>
+          <canvas class="strip" id="strip-learned" aria-label="The same view rendered from the field learned from the training cameras. Tap to pick a pixel."></canvas>
+        </div>
+        <div class="panel">
+          <h3>2 · Volume rendering along the selected ray</h3>
+          <canvas id="ray" aria-label="Chart along the selected ray: density sigma as a grey area, transmittance T as a blue line that falls as the ray passes through matter, and each sample's weight T times alpha as a bar in that sample's colour. The weights sum to the pixel's colour."></canvas>
+          <div class="key">
+            <span><i style="background:var(--muted)"></i>density σ</span>
+            <span><i style="background:var(--accent-2)"></i>transmittance T (light still getting through)</span>
+            <span><i style="background:var(--accent)"></i>bars: weight w = T·α</span>
+          </div>
+          <div class="formula">pixel = Σ<sub>i</sub> T<sub>i</sub> · (1 − e<sup>−σ<sub>i</sub>δ<sub>i</sub></sup>) · color<sub>i</sub><br>T<sub>i</sub> = e<sup>−Σ<sub>j&lt;i</sub> σ<sub>j</sub>δ<sub>j</sub></sup> &nbsp; <span id="pix-readout"></span></div>
+          <h3 style="margin-top:14px">3 · Learn the field from the training cameras</h3>
+          <div class="controls" style="margin-top:0">
+            <button class="btn primary" id="train" type="button" aria-pressed="false">▶ Train</button>
+            <button class="btn" id="reset" type="button">Reset field</button>
+            <label>Training cameras
+              <select id="views"><option>2</option><option>4</option><option selected>8</option><option>16</option></select>
+            </label>
+          </div>
+          <p class="readout" id="train-readout" style="margin:8px 0 0"></p>
+        </div>
+      </div>
+    </section>
+
+    <section id="explainer">
+      <h2>The idea in 60 seconds</h2>
+      <p>NeRF stores a scene as a <strong>field</strong>: a function you can ask "at this point in space,
+        how dense is the stuff here, and what colour is it?". In the paper the field is a neural
+        network taking a 3D position and viewing direction. There are no meshes and no voxels of
+        surfaces, just density σ and colour everywhere.</p>
+      <p>To make a picture, shoot one ray per pixel and take samples along it. Each sample's
+        density gives an opacity α = 1 − e<sup>−σδ</sup> for the short segment δ. The
+        <strong>transmittance</strong> T says how much light makes it that far without being blocked.
+        The pixel is the sum of colours weighted by T·α. Solid things stop the ray almost at once;
+        fog lets some light through. This is classic volume rendering, and every step is smooth.</p>
+      <p>Because it's smooth, you can run it backwards. Render the training cameras' pixels, compare them
+        with the real photos, and follow the gradient of the error to adjust the field's density and
+        colour everywhere along each ray. Rays from many directions must agree, so the only
+        consistent answer is the actual 3D shape. Then you can render it from <strong>new viewpoints</strong>
+        the cameras never saw.</p>
+      <p>Here the world is flat (2D) and each "photo" is a single row of pixels, but the rendering
+        equation and the training loop are the same ones the paper uses.</p>
+      <div class="try">
+        <h3>Try this</h3>
+        <ul>
+          <li>Tap the top strip on the orange disc. In panel 2 the blue T line drops off a cliff and nearly all the weight lands on a few samples at the surface. Now pick a pixel whose ray crosses the green fog first: T dips only a little, so the pixel mixes fog green with what lies behind it.</li>
+          <li>Press <strong>Train</strong> and switch to <strong>Learned field</strong>: blurry blobs sharpen into the disc and square, and the bottom strip starts matching the top one from your camera.</li>
+          <li>After training, look inside the learned disc: it is often hollow. No camera ray ever gets past the surface, so the photos say nothing about the inside, and the field never learns it.</li>
+          <li>Set <strong>Training cameras</strong> to 2 and train again. It matches both photos, yet from other angles it is full of streaks and ghosts. With only two views, many different scenes explain the photos equally well.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="simplifications">
+      <h2>How this demo simplifies the paper</h2>
+      <ul>
+        <li>The world is 2D and each camera image is one row of 64 pixels. The paper works in 3D with real photos of hundreds of thousands of pixels each.</li>
+        <li>The learned field is a 32×32 grid of numbers with bilinear interpolation, trained with Adam. The paper uses an 8-layer MLP with <strong>positional encoding</strong> of the inputs, a key ingredient for fine detail that this demo leaves out. The rendering and the gradient-through-rendering are the same idea.</li>
+        <li>Colour does not depend on viewing direction here, so there are no specular highlights. The paper's field also takes the ray direction as input.</li>
+        <li>One set of evenly spaced, jittered samples per ray. The paper also uses hierarchical "coarse-to-fine" sampling, which puts extra samples where the coarse pass found matter.</li>
+        <li>The "photos" are rendered from a hand-made scene of soft shapes with a black background, so the training data is noise-free.</li>
+      </ul>
+    </section>
+  </main>
+
+  <script type="module">
+    const $ = (id) => document.getElementById(id);
+    const PIX = 64, FOV = 62 * Math.PI / 180, CAM_R = 1.5, EXTENT = 1.68;
+    const G = 32, NS_TRAIN = 40, NS_VIEW = 64, NS_GT = 160;
+
+    // ---------- ground-truth scene (hand-made, soft-edged shapes) ----------
+    const sig = (x) => 1 / (1 + Math.exp(-x));
+    const OBJ = [
+      { kind: "disc", cx: -0.38, cy: 0.18, r: 0.3, sigma: 45, col: [0.91, 0.35, 0.05] },
+      { kind: "box", cx: 0.36, cy: -0.32, h: 0.22, ang: 0.45, sigma: 45, col: [0.11, 0.49, 0.84] },
+      { kind: "disc", cx: 0.3, cy: 0.42, r: 0.24, sigma: 3.5, col: [0.25, 0.75, 0.35] },
+    ];
+    function gtField(x, y, out) {
+      let s = 0, r = 0, g = 0, b = 0;
+      for (const o of OBJ) {
+        let d;
+        if (o.kind === "disc") d = Math.hypot(x - o.cx, y - o.cy) - o.r;
+        else {
+          const ca = Math.cos(o.ang), sa = Math.sin(o.ang), px = x - o.cx, py = y - o.cy;
+          const qx = ca * px + sa * py, qy = -sa * px + ca * py;
+          d = Math.max(Math.abs(qx), Math.abs(qy)) - o.h;
+        }
+        const si = o.sigma * sig(-d / 0.012);
+        s += si; r += si * o.col[0]; g += si * o.col[1]; b += si * o.col[2];
+      }
+      out[0] = s;
+      if (s > 1e-6) { out[1] = r / s; out[2] = g / s; out[3] = b / s; } else { out[1] = out[2] = out[3] = 0; }
+    }
+
+    // ---------- learned field: G×G grid of raw values, bilinear interpolation ----------
+    const NP = G * G * 4;
+    let P, M, V, adamT, steps;
+    const softplus = (x) => (x > 20 ? x : Math.log1p(Math.exp(x)));
+    const SIG_SCALE = 12;
+    function resetField() {
+      P = new Float32Array(NP); M = new Float32Array(NP); V = new Float32Array(NP); adamT = 0; steps = 0;
+      for (let i = 0; i < G * G; i++) P[i * 4] = -2.5;
+    }
+    // writes interpolated raw values into raw[4], returns base index & weights via cell
+    const cell = { i: 0, w00: 0, w10: 0, w01: 0, w11: 0 };
+    function lookup(x, y, raw) {
+      const gx = Math.min(G - 1.0001, Math.max(0, ((x + 1) / 2) * (G - 1)));
+      const gy = Math.min(G - 1.0001, Math.max(0, ((y + 1) / 2) * (G - 1)));
+      const ix = Math.floor(gx), iy = Math.floor(gy), fx = gx - ix, fy = gy - iy;
+      cell.i = (iy * G + ix) * 4;
+      cell.w00 = (1 - fx) * (1 - fy); cell.w10 = fx * (1 - fy); cell.w01 = (1 - fx) * fy; cell.w11 = fx * fy;
+      const a = cell.i, b = a + 4, c = a + G * 4, d = c + 4;
+      for (let k = 0; k < 4; k++) raw[k] = cell.w00 * P[a + k] + cell.w10 * P[b + k] + cell.w01 * P[c + k] + cell.w11 * P[d + k];
+    }
+    const RAW = new Float32Array(4);
+    function learnedField(x, y, out) {
+      lookup(x, y, RAW);
+      out[0] = SIG_SCALE * softplus(RAW[0]);
+      out[1] = sig(RAW[1]); out[2] = sig(RAW[2]); out[3] = sig(RAW[3]);
+    }
+
+    // ---------- cameras & rays ----------
+    function camera(px, py, prevDir) {
+      let fx = -px, fy = -py; const n = Math.hypot(fx, fy);
+      if (n < 0.05) [fx, fy] = prevDir || [1, 0]; else { fx /= n; fy /= n; }
+      return { x: px, y: py, fx, fy };
+    }
+    function rayDir(cam, p) {
+      const u = ((p + 0.5) / PIX) * 2 - 1, t = Math.tan(FOV / 2) * u;
+      // right vector = forward rotated -90°
+      let dx = cam.fx + t * cam.fy, dy = cam.fy - t * cam.fx; const n = Math.hypot(dx, dy);
+      return [dx / n, dy / n];
+    }
+    // intersect with the scene box [-1,1]^2
+    function boxHit(ox, oy, dx, dy) {
+      let tn = 0, tf = 1e9;
+      for (const [o, d] of [[ox, dx], [oy, dy]]) {
+        if (Math.abs(d) < 1e-9) { if (o < -1 || o > 1) return null; continue; }
+        let a = (-1 - o) / d, b = (1 - o) / d; if (a > b) [a, b] = [b, a];
+        tn = Math.max(tn, a); tf = Math.min(tf, b);
+      }
+      return tf > tn ? [tn, tf] : null;
+    }
+    const F = new Float32Array(4);
+    // volume-render one ray; optionally record per-sample values for the chart
+    function render(field, ox, oy, dx, dy, ns, rec) {
+      const hit = boxHit(ox, oy, dx, dy);
+      if (!hit) return [0, 0, 0, 0];
+      const [tn, tf] = hit, delta = (tf - tn) / ns;
+      let T = 1, r = 0, g = 0, b = 0;
+      for (let i = 0; i < ns; i++) {
+        const t = tn + (i + 0.5) * delta;
+        field(ox + t * dx, oy + t * dy, F);
+        const alpha = 1 - Math.exp(-F[0] * delta), w = T * alpha;
+        if (rec) rec.push({ t, sigma: F[0], T, w, c: [F[1], F[2], F[3]] });
+        r += w * F[1]; g += w * F[2]; b += w * F[3];
+        T *= 1 - alpha;
+      }
+      return [r, g, b, 1 - T];
+    }
+
+    // ---------- training data: photos from cameras on a circle ----------
+    let trainCams = [], trainRays = [];
+    function makeTraining(n) {
+      trainCams = []; trainRays = [];
+      for (let k = 0; k < n; k++) {
+        const a = Math.PI / 2 + (k / n) * Math.PI * 2 + 0.3;
+        const cam = camera(CAM_R * Math.cos(a), CAM_R * Math.sin(a));
+        trainCams.push(cam);
+        for (let p = 0; p < PIX; p++) {
+          const [dx, dy] = rayDir(cam, p), hit = boxHit(cam.x, cam.y, dx, dy);
+          if (!hit) continue;
+          const gt = render(gtField, cam.x, cam.y, dx, dy, NS_GT);
+          trainRays.push({ ox: cam.x, oy: cam.y, dx, dy, tn: hit[0], tf: hit[1], gt });
+        }
+      }
+    }
+
+    // ---------- one Adam step: render rays, backprop through volume rendering ----------
+    const GRAD = new Float32Array(NP);
+    const sS = new Float32Array(NS_TRAIN), sC = new Float32Array(NS_TRAIN * 3), sW = new Float32Array(NS_TRAIN), sTn = new Float32Array(NS_TRAIN);
+    const sRaw = new Float32Array(NS_TRAIN * 4), sCell = new Int32Array(NS_TRAIN), sWts = new Float32Array(NS_TRAIN * 4), sDel = new Float32Array(NS_TRAIN);
+    let lastMSE = NaN;
+    function trainStep() {
+      GRAD.fill(0);
+      let mse = 0;
+      const nr = trainRays.length;
+      for (const ray of trainRays) {
+        const delta = (ray.tf - ray.tn) / NS_TRAIN;
+        let T = 1, r = 0, g = 0, b = 0;
+        for (let i = 0; i < NS_TRAIN; i++) {
+          const t = ray.tn + (i + Math.random()) * delta; // stratified sampling
+          lookup(ray.ox + t * ray.dx, ray.oy + t * ray.dy, RAW);
+          sCell[i] = cell.i; sWts[i * 4] = cell.w00; sWts[i * 4 + 1] = cell.w10; sWts[i * 4 + 2] = cell.w01; sWts[i * 4 + 3] = cell.w11;
+          for (let k = 0; k < 4; k++) sRaw[i * 4 + k] = RAW[k];
+          const s = SIG_SCALE * softplus(RAW[0]);
+          const cr = sig(RAW[1]), cg = sig(RAW[2]), cb = sig(RAW[3]);
+          const alpha = 1 - Math.exp(-s * delta), w = T * alpha;
+          sS[i] = s; sC[i * 3] = cr; sC[i * 3 + 1] = cg; sC[i * 3 + 2] = cb; sW[i] = w; sDel[i] = delta;
+          T *= 1 - alpha; sTn[i] = T; // transmittance after sample i
+          r += w * cr; g += w * cg; b += w * cb;
+        }
+        const er = r - ray.gt[0], eg = g - ray.gt[1], eb = b - ray.gt[2];
+        mse += (er * er + eg * eg + eb * eb) / 3;
+        const k2 = 2 / (3 * nr), gr = k2 * er, gg = k2 * eg, gb = k2 * eb;
+        // walk backwards keeping S = colour contributed by samples after i (background is black)
+        let Sr = 0, Sg = 0, Sb = 0;
+        for (let i = NS_TRAIN - 1; i >= 0; i--) {
+          const cr = sC[i * 3], cg = sC[i * 3 + 1], cb = sC[i * 3 + 2], w = sW[i];
+          // dPixel/dsigma_i = delta_i * (T_{i+1} * c_i - S_{>i})
+          const dS = sDel[i] * (gr * (sTn[i] * cr - Sr) + gg * (sTn[i] * cg - Sg) + gb * (sTn[i] * cb - Sb));
+          const dRaw0 = dS * SIG_SCALE * sig(sRaw[i * 4]);
+          const dR1 = gr * w * cr * (1 - cr), dR2 = gg * w * cg * (1 - cg), dR3 = gb * w * cb * (1 - cb);
+          const base = sCell[i], idx = [base, base + 4, base + G * 4, base + G * 4 + 4];
+          for (let q = 0; q < 4; q++) {
+            const wt = sWts[i * 4 + q], j = idx[q];
+            GRAD[j] += wt * dRaw0; GRAD[j + 1] += wt * dR1; GRAD[j + 2] += wt * dR2; GRAD[j + 3] += wt * dR3;
+          }
+          Sr += w * cr; Sg += w * cg; Sb += w * cb;
+        }
+      }
+      adamT++;
+      const lr = 0.06, b1 = 0.9, b2 = 0.99, c1 = 1 - b1 ** adamT, c2 = 1 - b2 ** adamT;
+      for (let j = 0; j < NP; j++) {
+        const gj = GRAD[j];
+        M[j] = b1 * M[j] + (1 - b1) * gj; V[j] = b2 * V[j] + (1 - b2) * gj * gj;
+        P[j] -= (lr * (M[j] / c1)) / (Math.sqrt(V[j] / c2) + 1e-8);
+      }
+      steps++;
+      lastMSE = mse / nr;
+    }
+
+    // ---------- state & UI ----------
+    let cam = camera(-1.25, -1.05), sel = 24, showLearned = false, training = false;
+    let ctx, W = 0, H = 0, rctx, RW = 0, RH = 0, stT, stL;
+    const fieldImg = document.createElement("canvas"); const FI = 120;
+    fieldImg.width = fieldImg.height = FI;
+
+    const S = () => Math.min(W, H) / (2 * EXTENT);
+    const toPx = (x, y) => [W / 2 + x * S(), H / 2 - y * S()];
+    const toWorld = (px, py) => [(px - W / 2) / S(), -(py - H / 2) / S()];
+
+    function drawFieldImage(field) {
+      const fctx = fieldImg.getContext("2d"), img = fctx.createImageData(FI, FI);
+      for (let j = 0; j < FI; j++) for (let i = 0; i < FI; i++) {
+        field(((i + 0.5) / FI) * 2 - 1, 1 - ((j + 0.5) / FI) * 2, F);
+        const a = 1 - Math.exp(-F[0] * 0.05), o = (j * FI + i) * 4;
+        img.data[o] = F[1] * 255; img.data[o + 1] = F[2] * 255; img.data[o + 2] = F[3] * 255; img.data[o + 3] = a * 255;
+      }
+      fctx.putImageData(img, 0, 0);
+    }
+
+    function tri(c, x, y, fx, fy, size) {
+      const [px, py] = toPx(x, y), ang = Math.atan2(-fy, fx);
+      c.save(); c.translate(px, py); c.rotate(ang);
+      c.beginPath(); c.moveTo(size, 0); c.lineTo(-size * 0.7, size * 0.7); c.lineTo(-size * 0.7, -size * 0.7); c.closePath();
+      c.restore();
+    }
+
+    function drawScene() {
+      const c = ctx, col = Demo.color;
+      c.clearRect(0, 0, W, H);
+      const [bx0, by0] = toPx(-1, 1), side = 2 * S();
+      c.fillStyle = "#000"; c.fillRect(bx0, by0, side, side);
+      drawFieldImage(showLearned ? learnedField : gtField);
+      c.imageSmoothingEnabled = true; c.drawImage(fieldImg, bx0, by0, side, side);
+      c.strokeStyle = col("--border"); c.lineWidth = 1; c.strokeRect(bx0, by0, side, side);
+      // training cameras
+      for (const tc of trainCams) {
+        tri(c, tc.x, tc.y, tc.fx, tc.fy, 7); c.fillStyle = col("--muted"); c.fill();
+      }
+      // your rays
+      const [cx, cy] = toPx(cam.x, cam.y);
+      c.strokeStyle = col("--accent"); c.lineWidth = 1; c.globalAlpha = 0.22;
+      for (let p = 0; p < PIX; p += 4) {
+        const [dx, dy] = rayDir(cam, p), hit = boxHit(cam.x, cam.y, dx, dy), L = hit ? hit[1] : 3;
+        const [ex, ey] = toPx(cam.x + L * dx, cam.y + L * dy);
+        c.beginPath(); c.moveTo(cx, cy); c.lineTo(ex, ey); c.stroke();
+      }
+      c.globalAlpha = 1;
+      // selected ray with its samples
+      const [dx, dy] = rayDir(cam, sel), hit = boxHit(cam.x, cam.y, dx, dy), L = hit ? hit[1] : 3;
+      const [ex, ey] = toPx(cam.x + L * dx, cam.y + L * dy);
+      c.strokeStyle = col("--accent"); c.lineWidth = 2; c.beginPath(); c.moveTo(cx, cy); c.lineTo(ex, ey); c.stroke();
+      const rec = [];
+      render(showLearned ? learnedField : gtField, cam.x, cam.y, dx, dy, 32, rec);
+      for (const s of rec) {
+        const [sx, sy] = toPx(cam.x + s.t * dx, cam.y + s.t * dy);
+        c.beginPath(); c.arc(sx, sy, 1.5 + 9 * Math.sqrt(s.w), 0, 7);
+        c.fillStyle = "#fff"; c.globalAlpha = 0.35 + 0.65 * Math.min(1, s.w * 4); c.fill();
+      }
+      c.globalAlpha = 1;
+      tri(c, cam.x, cam.y, cam.fx, cam.fy, 12); c.fillStyle = col("--accent"); c.fill();
+      c.strokeStyle = col("--surface"); c.lineWidth = 1.5; c.stroke();
+      c.fillStyle = col("--muted"); c.font = "12px system-ui";
+      c.fillText("training cameras ▲", 8, H - 8);
+      c.fillText(showLearned ? "showing: learned field" : "showing: true scene", 8, 16);
+    }
+
+    function drawStrip(sctx, field, ns) {
+      const w = sctx.canvas.clientWidth, h = 30, pw = w / PIX;
+      let err = 0;
+      const out = [];
+      for (let p = 0; p < PIX; p++) {
+        const [dx, dy] = rayDir(cam, p);
+        const [r, g, b] = render(field, cam.x, cam.y, dx, dy, ns);
+        out.push([r, g, b]);
+        sctx.fillStyle = `rgb(${Math.min(255, r * 255) | 0},${Math.min(255, g * 255) | 0},${Math.min(255, b * 255) | 0})`;
+        sctx.fillRect(Math.floor(p * pw), 0, Math.ceil(pw) + 1, h);
+      }
+      const x = (sel + 0.5) * pw;
+      sctx.strokeStyle = Demo.color("--surface"); sctx.lineWidth = 3;
+      sctx.beginPath(); sctx.moveTo(x, 0); sctx.lineTo(x, 7); sctx.moveTo(x, h - 7); sctx.lineTo(x, h); sctx.stroke();
+      sctx.strokeStyle = Demo.color("--accent"); sctx.lineWidth = 1.5; sctx.stroke();
+      return out;
+    }
+
+    function drawRayChart() {
+      const c = rctx, col = Demo.color;
+      c.clearRect(0, 0, RW, RH);
+      c.fillStyle = col("--surface"); c.fillRect(0, 0, RW, RH);
+      const [dx, dy] = rayDir(cam, sel), rec = [];
+      const px = render(showLearned ? learnedField : gtField, cam.x, cam.y, dx, dy, NS_VIEW, rec);
+      const left = 8, right = RW - 8, top = 22, bot = RH - 18;
+      c.fillStyle = col("--muted"); c.font = "11px system-ui";
+      c.fillText(`${showLearned ? "learned field" : "true scene"} · ${NS_VIEW} samples, camera → far side`, left, 13);
+      if (!rec.length) { c.fillText("This ray misses the scene: the pixel is black.", left, RH / 2); }
+      else {
+        const n = rec.length, bw = (right - left) / n;
+        const X = (i) => left + (i + 0.5) * bw;
+        const maxS = Math.max(5, ...rec.map((s) => s.sigma));
+        // density area
+        c.fillStyle = col("--muted"); c.globalAlpha = 0.28; c.beginPath(); c.moveTo(X(0), bot);
+        rec.forEach((s, i) => c.lineTo(X(i), bot - (s.sigma / maxS) * (bot - top)));
+        c.lineTo(X(n - 1), bot); c.fill(); c.globalAlpha = 1;
+        // weight bars (scaled so the largest weight fills the chart)
+        const maxW = Math.max(0.05, ...rec.map((s) => s.w));
+        rec.forEach((s, i) => {
+          const h = (s.w / maxW) * (bot - top);
+          c.fillStyle = `rgb(${s.c[0] * 255 | 0},${s.c[1] * 255 | 0},${s.c[2] * 255 | 0})`;
+          c.fillRect(X(i) - bw * 0.4, bot - h, bw * 0.8, h);
+        });
+        // transmittance line
+        c.strokeStyle = col("--accent-2"); c.lineWidth = 2.5; c.beginPath();
+        rec.forEach((s, i) => (i ? c.lineTo(X(i), bot - s.T * (bot - top)) : c.moveTo(X(i), bot - s.T * (bot - top))));
+        c.stroke();
+        c.fillStyle = col("--accent-2"); c.fillText("T = 1", right - 30, top - 2);
+        c.fillStyle = col("--muted"); c.fillText(`max weight ${maxW.toFixed(2)}`, left, RH - 4);
+        c.fillText("distance along ray →", right - 108, RH - 4);
+      }
+      c.strokeStyle = col("--border"); c.beginPath(); c.moveTo(left, bot + 0.5); c.lineTo(right, bot + 0.5); c.stroke();
+      const rgb = `rgb(${Math.min(255, px[0] * 255) | 0},${Math.min(255, px[1] * 255) | 0},${Math.min(255, px[2] * 255) | 0})`;
+      $("pix-readout").innerHTML = `→ pixel <span class="swatch" style="background:${rgb}"></span> opacity Σw = ${px[3].toFixed(2)}`;
+    }
+
+    const psnr = (mse) => (mse > 0 ? (-10 * Math.log10(mse)).toFixed(1) : "∞");
+    function drawAll() {
+      if (!ctx) return;
+      drawScene();
+      const a = drawStrip(stT, gtField, NS_GT), b = drawStrip(stL, learnedField, NS_VIEW);
+      let e = 0; for (let p = 0; p < PIX; p++) for (let k = 0; k < 3; k++) e += (a[p][k] - b[p][k]) ** 2;
+      drawRayChart();
+      $("sel-readout").textContent = `pixel ${sel + 1}/${PIX}`;
+      $("cam-readout").textContent = `camera at (${cam.x.toFixed(2)}, ${cam.y.toFixed(2)})`;
+      $("train-readout").textContent = steps
+        ? `step ${steps} · training-view PSNR ${psnr(lastMSE)} dB · your view PSNR ${psnr(e / (PIX * 3))} dB (higher is better)`
+        : `${trainCams.length} cameras × ${PIX} pixels = ${trainRays.length} training rays hitting the scene. The field starts as faint grey fog.`;
+    }
+
+    function resize() {
+      const w = Math.max(240, $("scene").parentElement.clientWidth - 24);
+      W = w; H = Math.round(Math.min(390, Math.max(260, w * 0.72)));
+      ctx = Demo.hiDPI($("scene"), W, H);
+      for (const id of ["strip-true", "strip-learned"]) {
+        const sw = $(id).parentElement.clientWidth - 24;
+        const s = Demo.hiDPI($(id), sw, 30); s.imageSmoothingEnabled = false;
+        if (id === "strip-true") stT = s; else stL = s;
+      }
+      RW = Math.max(240, $("ray").parentElement.clientWidth - 24); RH = 170;
+      rctx = Demo.hiDPI($("ray"), RW, RH);
+      drawAll();
+    }
+
+    // training loop: as many steps as fit in ~14 ms per frame
+    function loop() {
+      if (!training) return;
+      const t0 = performance.now();
+      do trainStep(); while (performance.now() - t0 < 14);
+      drawAll();
+      requestAnimationFrame(loop);
+    }
+    function setTraining(on) {
+      training = on;
+      $("train").textContent = on ? "❚❚ Pause" : "▶ Train";
+      $("train").setAttribute("aria-pressed", String(on));
+      if (on) requestAnimationFrame(loop);
+    }
+    function setShow(learned) {
+      showLearned = learned;
+      $("show-true").setAttribute("aria-pressed", String(!learned));
+      $("show-learned").setAttribute("aria-pressed", String(learned));
+      drawAll();
+    }
+
+    // camera: press anywhere in the top-down view to move it there, then drag
+    const sc = $("scene");
+    let dragging = false;
+    const moveCam = (e) => {
+      const r = sc.getBoundingClientRect();
+      let [x, y] = toWorld(e.clientX - r.left, e.clientY - r.top);
+      const lim = EXTENT - 0.05; x = Math.max(-lim, Math.min(lim, x)); y = Math.max(-lim, Math.min(lim, y));
+      cam = camera(x, y, [cam.fx, cam.fy]);
+      drawAll();
+    };
+    sc.addEventListener("pointerdown", (e) => { dragging = true; sc.setPointerCapture(e.pointerId); moveCam(e); });
+    sc.addEventListener("pointermove", (e) => { if (dragging) moveCam(e); });
+    sc.addEventListener("pointerup", () => { dragging = false; });
+    sc.addEventListener("pointercancel", () => { dragging = false; });
+    for (const id of ["strip-true", "strip-learned"]) {
+      const el = $(id);
+      const pick = (e) => { const r = el.getBoundingClientRect(); sel = Math.max(0, Math.min(PIX - 1, Math.floor(((e.clientX - r.left) / r.width) * PIX))); drawAll(); };
+      let down = false;
+      el.addEventListener("pointerdown", (e) => { down = true; el.setPointerCapture(e.pointerId); pick(e); });
+      el.addEventListener("pointermove", (e) => { if (down) pick(e); });
+      el.addEventListener("pointerup", () => { down = false; });
+    }
+    $("train").addEventListener("click", () => { setTraining(!training); if (training && !showLearned) setShow(true); });
+    $("reset").addEventListener("click", () => { resetField(); lastMSE = NaN; drawAll(); });
+    $("views").addEventListener("change", (e) => { makeTraining(Number(e.target.value)); resetField(); drawAll(); });
+    $("show-true").addEventListener("click", () => setShow(false));
+    $("show-learned").addEventListener("click", () => setShow(true));
+
+    resetField();
+    makeTraining(8);
+    addEventListener("resize", resize);
+    Demo.onTheme(resize);
+  </script>
+</body>
+</html>
