@@ -1,0 +1,28 @@
+{
+  "arxiv": "1207.0580",
+  "title": "Improving neural networks by preventing co-adaptation of feature detectors",
+  "authors": [
+    "Geoffrey E. Hinton",
+    "Nitish Srivastava",
+    "Alex Krizhevsky",
+    "Ilya Sutskever",
+    "Ruslan R. Salakhutdinov"
+  ],
+  "year": 2012,
+  "url": "https://arxiv.org/abs/1207.0580",
+  "one_liner": "Train two nets on noisy points, one dropping random neurons each step, and watch it stop overfitting.",
+  "tags": [
+    "regularization"
+  ],
+  "difficulty": "beginner",
+  "interaction": [
+    {
+      "action": "click",
+      "selector": "#train"
+    },
+    {
+      "action": "wait",
+      "ms": 3500
+    }
+  ]
+}
