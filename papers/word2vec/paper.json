@@ -1,0 +1,28 @@
+{
+  "arxiv": "1301.3781",
+  "title": "Efficient Estimation of Word Representations in Vector Space",
+  "authors": [
+    "Tomas Mikolov",
+    "Kai Chen",
+    "Greg Corrado",
+    "Jeffrey Dean"
+  ],
+  "year": 2013,
+  "url": "https://arxiv.org/abs/1301.3781",
+  "one_liner": "Train skip-gram word vectors in your browser, then do arithmetic like king − man + woman.",
+  "tags": [
+    "nlp",
+    "representation-learning"
+  ],
+  "difficulty": "beginner",
+  "interaction": [
+    {
+      "action": "click",
+      "selector": "#train"
+    },
+    {
+      "action": "wait",
+      "ms": 4000
+    }
+  ]
+}
