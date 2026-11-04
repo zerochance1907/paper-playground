@@ -33,6 +33,44 @@ with an arXiv link. When a maintainer labels it `build-paper`, a Claude Code age
 4. runs `scripts/check.mjs` in headless Chromium until it passes, and
 5. opens a pull request for human review.
 
+## Generate a demo yourself, free
+
+You don't need Claude or any API key. One command turns any arXiv paper into a working demo page:
+
+```bash
+npm run generate -- 1312.5602            # or an arXiv URL
+```
+
+It picks one of five hand-written, browser-tested **demo engines**, fills in the paper's
+title, explanation, tags and settings, writes `papers/<slug>/`, and runs the browser
+checker:
+
+| Engine | What runs live in the browser | Good for |
+|---|---|---|
+| `optimizer` | SGD, momentum, Nesterov, AdaGrad, RMSProp and Adam racing on 2D loss surfaces | optimizers, training dynamics |
+| `classifier` | two small neural nets trained side by side, identical except for one change (dropout, weight decay, residual connections, depth, ReLU) | architectures, regularisation |
+| `generative` | a 2D diffusion sampler denoising noise into a shape you can draw | diffusion, GANs, VAEs, flows |
+| `rl` | Q-learning, SARSA or REINFORCE in an editable cliff gridworld | RL, policy gradients, control |
+| `sequence` | a character language model with adjustable context length | language models, transformers, RNNs |
+
+**Text backends**: the model, if any, writes only about 600 tokens of JSON text and never code,
+so a weak model can't break a page.
+
+| `--backend` | Cost | What writes the text |
+|---|---|---|
+| `template` | $0, instant | no AI: keyword rules choose the engine, and the explainer quotes the abstract |
+| `ollama` (the default `auto` uses it when Ollama is running) | $0, local | any local model, e.g. `ollama pull qwen3:8b` (≈1.5K tokens per paper) |
+| `openai` | free–cents | any OpenAI-compatible server: LM Studio, llama.cpp, OpenRouter, Groq… (`OPENAI_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_MODEL`) |
+| `anthropic` | ≈ $0.005 | Claude Haiku (`ANTHROPIC_API_KEY`) |
+
+Useful flags: `--kind <engine>` to override the engine choice, `--slug`, `--force`,
+`--dry-run` (print without writing). From GitHub, a maintainer can add the `generate-free`
+label to a paper request (or run the workflow from the Actions tab). The free generator then
+opens a pull request with no secrets needed.
+
+Generated pages are general illustrations of a paper's idea. The hand-built demos in the
+gallery are made with Claude Code following [`CLAUDE.md`](CLAUDE.md) and are specific to each paper.
+
 ## How it works
 
 ```
@@ -43,6 +81,7 @@ scripts/new-paper.mjs      arXiv id → paper.json
 scripts/check.mjs          Playwright: structure, console errors, pinned CDNs, size,
                            phone overflow, and "did the demo visibly respond?"
 scripts/build.mjs          gallery + papers → dist/ (deployed to GitHub Pages)
+scripts/generate.mjs       arXiv id → complete demo page, free (generator/kinds/ = demo engines)
 ```
 
 ## Run locally

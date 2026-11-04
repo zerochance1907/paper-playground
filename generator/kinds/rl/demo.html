@@ -1,0 +1,29 @@
+<style>
+  select { font: inherit; font-size: 14px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+  #grid { width: 100%; border-radius: 8px; cursor: pointer; }
+  .key { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+</style>
+<div class="demo-grid">
+  <div class="panel">
+    <h3>1 · The agent learns from reward alone · click cells for walls / lava</h3>
+    <canvas id="grid" aria-label="Gridworld: start S, goal G, a row of lava cells, cells coloured by learned value and arrows showing the greedy action."></canvas>
+    <div class="key"><span>S start</span><span>G goal (episode ends)</span><span>▒ lava −100</span><span>■ wall</span><span>each step −1</span></div>
+    <div class="controls">
+      <label>Algorithm
+        <select id="algo">
+          <option value="q-learning">Q-learning (off-policy)</option>
+          <option value="sarsa">SARSA (on-policy)</option>
+          <option value="reinforce">REINFORCE (policy gradient)</option>
+        </select>
+      </label>
+      <label>Exploration ε <input type="range" id="eps" min="0" max="0.4" step="0.05" value="0.1"></label>
+      <label>Discount γ <input type="range" id="gamma" min="0.5" max="1" step="0.05" value="0.95"></label>
+      <button class="btn" id="reset" type="button">↺ Reset agent</button>
+    </div>
+  </div>
+  <div class="panel">
+    <h3>Return per episode (moving average)</h3>
+    <canvas id="returns" aria-label="Average return per episode over training."></canvas>
+    <p class="readout" id="stats"></p>
+  </div>
+</div>
