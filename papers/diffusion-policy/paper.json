@@ -1,0 +1,39 @@
+{
+  "arxiv": "2303.04137",
+  "title": "Diffusion Policy: Visuomotor Policy Learning via Action Diffusion",
+  "authors": [
+    "Cheng Chi",
+    "Zhenjia Xu",
+    "Siyuan Feng",
+    "Eric Cousineau",
+    "Yilun Du",
+    "Benjamin Burchfiel",
+    "Russ Tedrake",
+    "Shuran Song"
+  ],
+  "year": 2023,
+  "url": "https://arxiv.org/abs/2303.04137",
+  "one_liner": "Train two robot policies on left-or-right demos: regression averages into the wall, diffusion picks a side.",
+  "tags": [
+    "robotics",
+    "diffusion",
+    "generative"
+  ],
+  "difficulty": "intermediate",
+  "interaction": [
+    {
+      "action": "wait",
+      "ms": 9000
+    },
+    {
+      "action": "drag",
+      "selector": "#world",
+      "from": [0.5, 0.9],
+      "to": [0.53, 0.88]
+    },
+    {
+      "action": "wait",
+      "ms": 600
+    }
+  ]
+}
