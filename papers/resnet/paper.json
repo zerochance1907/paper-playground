@@ -1,0 +1,28 @@
+{
+  "arxiv": "1512.03385",
+  "title": "Deep Residual Learning for Image Recognition",
+  "authors": [
+    "Kaiming He",
+    "Xiangyu Zhang",
+    "Shaoqing Ren",
+    "Jian Sun"
+  ],
+  "year": 2015,
+  "url": "https://arxiv.org/abs/1512.03385",
+  "one_liner": "Train a deep plain net and the same net with skip connections side by side; watch only one learn.",
+  "tags": [
+    "architectures",
+    "vision"
+  ],
+  "difficulty": "beginner",
+  "interaction": [
+    {
+      "action": "click",
+      "selector": "#train"
+    },
+    {
+      "action": "wait",
+      "ms": 3000
+    }
+  ]
+}
