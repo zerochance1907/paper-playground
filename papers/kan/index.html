@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KAN: Kolmogorov-Arnold Networks · Paper → Playground</title>
+  <meta name="description" content="Train a tiny KAN next to an MLP, read the learned spline on every edge, and drag its control points.">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="../_shared/demo.css">
+  <script type="module" src="../_shared/demo.js"></script>
+  <style>
+    select { max-width: 100%; font: inherit; font-size: 14px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+    .maps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 6px; }
+    .maps figure { margin: 0; text-align: center; font-size: 12px; color: var(--muted); }
+    .maps canvas { width: 100%; height: auto; aspect-ratio: 1; border-radius: 6px; image-rendering: pixelated; }
+    .cap { font-size: 13px; color: var(--muted); margin: 6px 0 0; }
+    .score { display: grid; grid-template-columns: auto 1fr auto; gap: 2px 10px; font-size: 13px; margin-top: 6px; align-items: center; }
+    .score .num { font-family: var(--mono); text-align: right; font-variant-numeric: tabular-nums; }
+    .sw { width: 12px; height: 3px; border-radius: 2px; }
+    #editor { cursor: ns-resize; }
+  </style>
+</head>
+<body>
+  <header data-paper-header></header>
+  <main>
+    <section id="demo" aria-label="Interactive Kolmogorov-Arnold network demo">
+      <div class="demo-grid">
+        <div class="panel">
+          <h3>KAN: a learnable function on every edge, nodes just add</h3>
+          <canvas id="kan" aria-label="Kolmogorov-Arnold network diagram. Inputs x and y at the bottom, sum nodes above. Each edge is drawn as a small plot of its learned one-dimensional spline function, labelled with the closest simple formula. Tap an edge to edit it below."></canvas>
+          <h3 style="margin-top:10px" id="editor-title">Selected edge</h3>
+          <canvas id="editor" aria-label="Large plot of the selected edge's spline function with its B-spline control points. Drag a control point up or down to reshape the function."></canvas>
+          <p class="cap">Tap an edge above to select it. Drag the dots (B-spline coefficients) up or down; training pulls them back if it is running.</p>
+        </div>
+        <div class="panel">
+          <h3>MLP with about the same number of parameters</h3>
+          <canvas id="mlp" aria-label="Multi-layer perceptron diagram. Edges carry single learnable numbers (line thickness shows size, colour shows sign); every hidden node applies the same fixed tanh."></canvas>
+          <p class="cap">MLP: a learnable <em>number</em> on each edge, a fixed tanh on each node.</p>
+          <div class="maps">
+            <figure><canvas id="m-target" width="40" height="40" aria-label="Heat map of the target function over x and y from -1 to 1"></canvas>target f(x, y)</figure>
+            <figure><canvas id="m-kan" width="40" height="40" aria-label="Heat map of the KAN's current prediction"></canvas>KAN</figure>
+            <figure><canvas id="m-mlp" width="40" height="40" aria-label="Heat map of the MLP's current prediction"></canvas>MLP</figure>
+          </div>
+          <canvas id="loss" style="margin-top:8px" aria-label="Test error over training steps for the KAN (orange) and the MLP (blue), on a log scale."></canvas>
+          <div class="score">
+            <span class="sw" style="background:var(--accent)"></span><span id="kan-name">KAN</span><span class="num" id="kan-rmse">–</span>
+            <span class="sw" style="background:var(--accent-2)"></span><span id="mlp-name">MLP</span><span class="num" id="mlp-rmse">–</span>
+          </div>
+          <div class="controls">
+            <label>Target <select id="target">
+              <option value="exp">exp(sin(πx) + y²)</option>
+              <option value="xy">x · y</option>
+              <option value="add">sin(πx) + y²</option>
+            </select></label>
+            <button class="btn primary" id="play" type="button">Pause</button>
+            <button class="btn" id="reset" type="button">Restart</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="explainer">
+      <h2>The idea in 60 seconds</h2>
+      <p>A normal neural network (an MLP) puts a learnable <strong>number</strong> on every connection and a fixed,
+        hand-picked nonlinearity (like tanh or ReLU) on every node. A Kolmogorov-Arnold Network flips this:
+        every connection carries a learnable <strong>one-dimensional function</strong>, and nodes only add up what
+        arrives. Each function is a smooth B-spline curve defined by a handful of control points, and those
+        control points are what training adjusts.</p>
+      <p>The design comes from the Kolmogorov-Arnold representation theorem: any continuous function of
+        several variables can be written as sums of one-variable functions, f(x, y) = Φ(φ<sub>1</sub>(x) + φ<sub>2</sub>(y))
+        and so on. The theorem's functions can be badly behaved, but the paper argues that for the smooth,
+        structured functions we meet in science, small KANs with smooth splines work well.</p>
+      <p>The payoff is <strong>interpretability</strong>. Because each edge is a curve you can plot, you can just
+        look at a trained KAN and read off what it computed. Fit exp(sin(πx) + y²) and the edges turn into
+        a sine, a parabola and an exponential. The paper takes this further by snapping edges to symbolic
+        formulas; the "≈" labels here do a simple version of that. An MLP's weights, by contrast, are just a
+        bag of numbers.</p>
+      <p>The paper also reports that KANs can reach lower error than MLPs with the same number of
+        parameters on such functions. The error chart lets you see that on a toy scale.</p>
+      <div class="try">
+        <h3>Try this</h3>
+        <ul>
+          <li>Let it train on exp(sin(πx) + y²). Within a few seconds the x-edge becomes a sine wave and the y-edge a parabola; after 10–20 seconds the top edge settles into an exponential, and the labels say so.</li>
+          <li>Drag a control point on the selected edge while paused: the KAN heat map changes only along the matching direction, because that edge only sees one input. Press Train and watch it get pulled back.</li>
+          <li>Compare the error curves: on exp(sin(πx) + y²) and sin(πx) + y² the KAN typically ends 5–20× below the parameter-matched MLP within half a minute.</li>
+          <li>Switch to <strong>x · y</strong>. A product isn't a single sum of one-variable functions, so the KAN needs two hidden nodes. The paper shows a KAN can learn it as squares, x·y = ((x+y)² − (x−y)²)/4, but this small, briefly trained one usually finds a less readable solution and only ties the MLP. KANs are not automatically interpretable or better.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="simplifications">
+      <h2>How this demo simplifies the paper</h2>
+      <ul>
+        <li>The KAN shape is fixed per target ([2, 1, 1] or [2, 2, 1]) and matches the target's known structure. The paper also shows how to discover the shape by training a bigger KAN with sparsity regularisation and pruning it.</li>
+        <li>Each edge is a pure cubic B-spline (5 grid intervals on the first layer, 8 on the second). The paper adds a residual SiLU term with its own weights to every edge, and refines the grid during training ("grid extension"); neither is done here. Inputs outside a spline's range are clamped to the edge of the range.</li>
+        <li>Edges start as straight lines with random slopes (the paper starts splines near zero plus a SiLU term). Both networks are trained with Adam on 256 random points; the paper mostly uses LBFGS.</li>
+        <li>The "≈ sin / x² / exp" labels fit a·f(b·u + c) + d for a few candidate functions and pick the best R². The paper's symbolic step is similar in spirit but interactive and also fixes the affine parameters exactly.</li>
+        <li>The MLP baseline is a single hidden layer sized to roughly match the KAN's parameter count. A wider or deeper MLP would also fit these functions; the paper's accuracy claims concern scaling at matched size and are debated for larger, noisier tasks.</li>
+      </ul>
+    </section>
+  </main>
+
+  <script type="module">
+    // ---------- RNG ----------
+    let seed = 7;
+    const rand = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 2 ** 32; };
+    const gauss = () => Math.sqrt(-2 * Math.log(1 - rand())) * Math.cos(2 * Math.PI * rand());
+
+    // ---------- cubic B-spline edge ----------
+    const K = 3;
+    class Edge {
+      constructor(lo, hi, G) {
+        this.lo = lo; this.hi = hi; this.G = G; this.n = G + K; this.h = (hi - lo) / G;
+        this.c = new Float64Array(this.n); this.g = new Float64Array(this.n);
+        this.m = new Float64Array(this.n); this.v = new Float64Array(this.n);
+        // Greville abscissae: where each control point "sits" along the input axis
+        this.xi = Float64Array.from({ length: this.n }, (_, i) => {
+          let s = 0; for (let j = 1; j <= K; j++) s += lo + (i + j - K) * this.h; return s / K;
+        });
+      }
+      initLinear(slope) { for (let i = 0; i < this.n; i++) this.c[i] = slope * this.xi[i] + 0.02 * gauss(); }
+      // Cox-de Boor on a uniform extended grid; returns the n = G+K basis values at u
+      basis(u, out = new Float64Array(this.n)) {
+        const x = Math.min(this.hi - 1e-9, Math.max(this.lo, u));
+        const nk = this.G + 2 * K, t = (j) => this.lo + (j - K) * this.h;
+        let B = new Float64Array(nk);
+        for (let j = 0; j < nk; j++) B[j] = t(j) <= x && x < t(j + 1) ? 1 : 0;
+        for (let p = 1; p <= K; p++) {
+          const nb = new Float64Array(nk - p), den = p * this.h;
+          for (let j = 0; j < nk - p; j++) nb[j] = ((x - t(j)) / den) * B[j] + ((t(j + p + 1) - x) / den) * B[j + 1];
+          B = nb;
+        }
+        out.set(B.subarray(0, this.n));
+        return out;
+      }
+      evalB(B) { let s = 0; for (let i = 0; i < this.n; i++) s += this.c[i] * B[i]; return s; }
+      f(u) { return this.evalB(this.basis(u)); }
+      df(u) { const e = this.h * 0.05; return (this.f(u + e) - this.f(u - e)) / (2 * e); }
+    }
+
+    // ---------- KAN: layers of edges; node value = sum of incoming edge outputs ----------
+    const RANGES = [[-1, 1, 5], [-2.5, 2.5, 8]];
+    function makeKAN(shape) {
+      const layers = [];
+      for (let l = 0; l < shape.length - 1; l++) {
+        const [lo, hi, G] = RANGES[l];
+        layers.push(Array.from({ length: shape[l + 1] }, () => Array.from({ length: shape[l] }, () => {
+          const e = new Edge(lo, hi, G);
+          e.initLinear((rand() < 0.5 ? -1 : 1) * (0.4 + 0.6 * rand()));
+          return e;
+        })));
+      }
+      return { shape, layers, t: 0 };
+    }
+    function kanForward(net, x) {
+      const acts = [x], Bs = [];
+      let a = x;
+      for (const L of net.layers) {
+        const out = new Float64Array(L.length), BL = [];
+        L.forEach((row, q) => {
+          BL.push(row.map((e, p) => { const B = e.basis(a[p]); out[q] += e.evalB(B); return B; }));
+        });
+        Bs.push(BL); acts.push(out); a = out;
+      }
+      return { acts, Bs, y: a[0] };
+    }
+    function kanBackward(net, fw, dy) {
+      let d = [dy];
+      for (let l = net.layers.length - 1; l >= 0; l--) {
+        const L = net.layers[l], ain = fw.acts[l], dIn = new Float64Array(ain.length);
+        L.forEach((row, q) => row.forEach((e, p) => {
+          const B = fw.Bs[l][q][p];
+          for (let i = 0; i < e.n; i++) e.g[i] += d[q] * B[i];
+          if (l > 0) dIn[p] += d[q] * e.df(ain[p]);
+        }));
+        d = dIn;
+      }
+    }
+    function kanEdges(net) { return net.layers.flat(2); }
+
+    // ---------- MLP baseline: 2 -> H (tanh) -> 1 ----------
+    function makeMLP(H) {
+      return { H, W1: Float64Array.from({ length: 2 * H }, () => gauss() * Math.sqrt(1 / 2)), b1: Float64Array.from({ length: H }, () => 0.5 * gauss()),
+        W2: Float64Array.from({ length: H }, () => gauss() * Math.sqrt(1 / H)), b2: new Float64Array(1) };
+    }
+    const mlpParams = (m) => [m.W1, m.b1, m.W2, m.b2];
+    function mlpForward(m, x) {
+      const h = new Float64Array(m.H);
+      let y = m.b2[0];
+      for (let j = 0; j < m.H; j++) { h[j] = Math.tanh(m.W1[2 * j] * x[0] + m.W1[2 * j + 1] * x[1] + m.b1[j]); y += m.W2[j] * h[j]; }
+      return { h, y };
+    }
+
+    // ---------- Adam on plain arrays ----------
+    function adamState(arrs) { return arrs.map((a) => ({ p: a, g: new Float64Array(a.length), m: new Float64Array(a.length), v: new Float64Array(a.length) })); }
+    function adamStep(st, lr, t, scale) {
+      const b1 = 0.9, b2 = 0.999, c1 = 1 - b1 ** t, c2 = 1 - b2 ** t;
+      for (const s of st) for (let i = 0; i < s.p.length; i++) {
+        const g = s.g[i] * scale;
+        s.m[i] = b1 * s.m[i] + (1 - b1) * g; s.v[i] = b2 * s.v[i] + (1 - b2) * g * g;
+        s.p[i] -= (lr * s.m[i]) / c1 / (Math.sqrt(s.v[i] / c2) + 1e-8);
+        s.g[i] = 0;
+      }
+    }
+
+    // ---------- targets ----------
+    const TARGETS = {
+      exp: { f: (x, y) => Math.exp(Math.sin(Math.PI * x) + y * y), shape: [2, 1, 1], label: "exp(sin(πx) + y²)" },
+      xy: { f: (x, y) => x * y, shape: [2, 2, 1], label: "x · y" },
+      add: { f: (x, y) => Math.sin(Math.PI * x) + y * y, shape: [2, 1, 1], label: "sin(πx) + y²" },
+    };
+    let target, kan, kanSt, mlp, mlpSt, train, test, mu, sd, step, hist;
+    function setup(name) {
+      target = TARGETS[name];
+      seed = 7 + Math.floor(Math.random() * 1e6);
+      kan = makeKAN(target.shape);
+      kanSt = kanEdges(kan).map((e) => ({ p: e.c, g: e.g, m: e.m, v: e.v }));
+      const nKan = kanEdges(kan).reduce((s, e) => s + e.n, 0);
+      const H = Math.max(2, Math.round((nKan - 1) / 4));   // 4H + 1 MLP params ≈ KAN params
+      mlp = makeMLP(H); mlpSt = adamState(mlpParams(mlp));
+      document.getElementById("kan-name").textContent = `KAN [${target.shape.join(", ")}] · ${nKan} params · test RMSE`;
+      document.getElementById("mlp-name").textContent = `MLP [2, ${H}, 1] · ${4 * H + 1} params · test RMSE`;
+      const raw = Array.from({ length: 256 }, () => [rand() * 2 - 1, rand() * 2 - 1]);
+      const vals = raw.map(([x, y]) => target.f(x, y));
+      mu = vals.reduce((a, b) => a + b, 0) / vals.length;
+      sd = Math.sqrt(vals.reduce((a, b) => a + (b - mu) ** 2, 0) / vals.length);
+      train = raw.map((p, i) => ({ x: p, y: (vals[i] - mu) / sd }));
+      test = [];
+      for (let j = 0; j < GRID; j++) for (let i = 0; i < GRID; i++) {
+        const x = -1 + (2 * (i + 0.5)) / GRID, y = 1 - (2 * (j + 0.5)) / GRID;
+        test.push({ x: [x, y], y: (target.f(x, y) - mu) / sd });
+      }
+      step = 0; hist = [];
+      selected = Math.min(selected, kanEdges(kan).length - 1);
+      symCache = null;
+    }
+    const GRID = 40;
+
+    function trainStep() {
+      for (const s of train) {
+        const fw = kanForward(kan, s.x);
+        kanBackward(kan, fw, 2 * (fw.y - s.y));
+        const m = mlpForward(mlp, s.x), d = 2 * (m.y - s.y);
+        mlpSt[3].g[0] += d;
+        for (let j = 0; j < mlp.H; j++) {
+          mlpSt[2].g[j] += d * m.h[j];
+          const dh = d * mlp.W2[j] * (1 - m.h[j] ** 2);
+          mlpSt[1].g[j] += dh; mlpSt[0].g[2 * j] += dh * s.x[0]; mlpSt[0].g[2 * j + 1] += dh * s.x[1];
+        }
+      }
+      step++;
+      const lr = step < 1500 ? 0.02 : 0.008;
+      adamStep(kanSt, lr, step, 1 / train.length);
+      adamStep(mlpSt, lr, step, 1 / train.length);
+    }
+    function evaluate() {
+      let ek = 0, em = 0;
+      const pk = new Float64Array(test.length), pm = new Float64Array(test.length);
+      test.forEach((s, i) => {
+        pk[i] = kanForward(kan, s.x).y; pm[i] = mlpForward(mlp, s.x).y;
+        ek += (pk[i] - s.y) ** 2; em += (pm[i] - s.y) ** 2;
+      });
+      return { pk, pm, rk: Math.sqrt(ek / test.length), rm: Math.sqrt(em / test.length) };
+    }
+
+    // ---------- "≈ formula" labels: best a·f(b·u + c) + d over a small library ----------
+    const LIB = [
+      ["u", (u) => u], ["u²", (u) => u * u], ["u³", (u) => u * u * u], ["sin", Math.sin], ["exp", Math.exp], ["tanh", Math.tanh],
+    ];
+    let symCache = null;
+    function edgeRange(l, p) {
+      if (l === 0) return [-1, 1];
+      let lo = Infinity, hi = -Infinity;
+      for (const s of train) { const v = kanForward(kan, s.x).acts[1][p]; lo = Math.min(lo, v); hi = Math.max(hi, v); }
+      const [a, b] = RANGES[1];
+      return [Math.max(a, lo), Math.min(b, hi)];
+    }
+    function symbolic(e, lo, hi) {
+      const N = 40, us = [], ys = [];
+      for (let i = 0; i < N; i++) { const u = lo + ((hi - lo) * i) / (N - 1); us.push(u); ys.push(e.f(u)); }
+      const ym = ys.reduce((a, b) => a + b, 0) / N, sst = ys.reduce((a, b) => a + (b - ym) ** 2, 0) || 1e-12;
+      const r2of = (gs) => {
+        const gm = gs.reduce((a, b) => a + b, 0) / N;
+        let sgg = 0, sgy = 0;
+        for (let i = 0; i < N; i++) { sgg += (gs[i] - gm) ** 2; sgy += (gs[i] - gm) * (ys[i] - ym); }
+        if (sgg < 1e-12 || !isFinite(sgg)) return -1;
+        return (sgy * sgy) / (sgg * sst);
+      };
+      if (Math.sqrt(sst / N) < 0.03) return { name: "≈ 0", r2: 1 };
+      let best = { name: "u", r2: r2of(us) };
+      const scale = 1 / Math.max(Math.abs(lo), Math.abs(hi), 1e-6);
+      for (const [name, fn] of LIB.slice(1)) {
+        for (let bi = -16; bi <= 16; bi++) {
+          if (!bi) continue;
+          const b = (bi / 4) * scale * (name === "exp" ? 1 : 1.25);
+          for (let ci = -6; ci <= 6; ci++) {
+            const c = ci * 0.25;
+            const r = r2of(us.map((u) => fn(b * u + c)));
+            if (r > best.r2 + 0.0005) best = { name, r2: r };
+          }
+        }
+      }
+      return best;
+    }
+    function updateSymbols() {
+      symCache = [];
+      kan.layers.forEach((L, l) => L.forEach((row) => row.forEach((e, p) => {
+        const [lo, hi] = edgeRange(l, p);
+        symCache.push(hi - lo < 0.05 ? { name: "–", r2: 0 } : symbolic(e, lo, hi));
+      })));
+    }
+
+    // ---------- drawing ----------
+    const C = (n) => Demo.color(n);
+    const hex = (s) => { s = s.replace("#", ""); if (s.length === 3) s = [...s].map((ch) => ch + ch).join(""); return [0, 2, 4].map((i) => parseInt(s.slice(i, i + 2), 16)); };
+    const kc = document.getElementById("kan"), ec = document.getElementById("editor"), mc = document.getElementById("mlp"), lc = document.getElementById("loss");
+    let kctx, ectx, mctx, lctx, KW, KH, EW, EH, MW, MH, LW, LH;
+    let boxes = [], selected = 0;
+    function resize() {
+      KW = Math.max(260, kc.parentElement.clientWidth - 24); KH = 330;
+      EW = KW; EH = 170;
+      MW = Math.max(240, mc.parentElement.clientWidth - 24); MH = 130;
+      LW = MW; LH = 90;
+      kctx = Demo.hiDPI(kc, KW, KH); ectx = Demo.hiDPI(ec, EW, EH);
+      mctx = Demo.hiDPI(mc, MW, MH); lctx = Demo.hiDPI(lc, LW, LH);
+      drawAll(true);
+    }
+    function plotEdge(ctx, e, x, y, w, h, opts = {}) {
+      const N = opts.n || 48, ys = [];
+      for (let i = 0; i < N; i++) ys.push(e.f(e.lo + ((e.hi - e.lo) * i) / (N - 1)));
+      let lo = Math.min(...ys), hi = Math.max(...ys);
+      if (opts.ctrl) { lo = Math.min(lo, ...e.c); hi = Math.max(hi, ...e.c); }
+      if (hi - lo < 1e-3) { lo -= 0.5; hi += 0.5; }
+      const pad = (hi - lo) * 0.12; lo -= pad; hi += pad;
+      const X = (u) => x + ((u - e.lo) / (e.hi - e.lo)) * w, Y = (v) => y + h - ((v - lo) / (hi - lo)) * h;
+      if (opts.axes) {
+        ctx.strokeStyle = C("--border"); ctx.lineWidth = 1;
+        ctx.beginPath(); if (lo < 0 && hi > 0) { ctx.moveTo(x, Y(0)); ctx.lineTo(x + w, Y(0)); }
+        if (e.lo < 0 && e.hi > 0) { ctx.moveTo(X(0), y); ctx.lineTo(X(0), y + h); } ctx.stroke();
+      }
+      if (opts.ctrl) {
+        ctx.strokeStyle = C("--muted"); ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
+        ctx.beginPath(); e.c.forEach((cv, i) => (i ? ctx.lineTo(X(e.xi[i]), Y(cv)) : ctx.moveTo(X(e.xi[i]), Y(cv)))); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      ctx.strokeStyle = C("--accent"); ctx.lineWidth = opts.lw || 2;
+      ctx.beginPath();
+      ys.forEach((v, i) => { const px = x + (w * i) / (N - 1); i ? ctx.lineTo(px, Y(v)) : ctx.moveTo(px, Y(v)); });
+      ctx.stroke();
+      if (opts.ctrl) {
+        e.c.forEach((cv, i) => {
+          ctx.beginPath(); ctx.arc(X(e.xi[i]), Y(cv), 6, 0, 7);
+          ctx.fillStyle = C("--surface"); ctx.fill(); ctx.strokeStyle = C("--accent-2"); ctx.lineWidth = 2; ctx.stroke();
+        });
+      }
+      return { X, Y, lo, hi };
+    }
+    function drawKAN() {
+      const ctx = kctx; ctx.clearRect(0, 0, KW, KH);
+      const shape = kan.shape, rows = [KH - 18, null, KH * 0.47, null, 18];
+      const nodeX = (n, i) => KW * ((i + 1) / (n + 1));
+      const edgesL = kan.layers.map((L) => L.flat().length);
+      boxes = [];
+      const bw = Math.min(110, (KW - 16) / Math.max(...edgesL) - 10), bh = 58;
+      let idx = 0;
+      kan.layers.forEach((L, l) => {
+        const yIn = rows[2 * l], yOut = rows[2 * l + 2], yBox = (yIn + yOut) / 2 - bh / 2;
+        const n = L.flat().length;
+        let k = 0;
+        L.forEach((row, q) => row.forEach((e, p) => {
+          const bx = KW * ((k + 1) / (n + 1)) - bw / 2;
+          ctx.strokeStyle = C("--border"); ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.moveTo(nodeX(shape[l], p), yIn - 9); ctx.lineTo(bx + bw / 2, yBox + bh);
+          ctx.moveTo(bx + bw / 2, yBox); ctx.lineTo(nodeX(shape[l + 1], q), yOut + 9); ctx.stroke();
+          const sel = idx === selected;
+          ctx.fillStyle = C("--surface"); ctx.strokeStyle = sel ? C("--accent-2") : C("--border"); ctx.lineWidth = sel ? 2.5 : 1;
+          ctx.beginPath(); ctx.roundRect(bx, yBox, bw, bh, 6); ctx.fill(); ctx.stroke();
+          plotEdge(ctx, e, bx + 5, yBox + 5, bw - 10, bh - 22, { n: 32 });
+          const s = symCache?.[idx];
+          ctx.fillStyle = C("--muted"); ctx.font = "11px system-ui"; ctx.textAlign = "center";
+          ctx.fillText(s ? (s.name === "–" || s.name === "≈ 0" ? s.name : `≈ ${s.name}  R² ${s.r2.toFixed(2)}`) : "", bx + bw / 2, yBox + bh - 5);
+          boxes.push({ x: bx, y: yBox, w: bw, h: bh, l, q, p });
+          k++; idx++;
+        }));
+      });
+      shape.forEach((n, l) => {
+        for (let i = 0; i < n; i++) {
+          const x = nodeX(n, i), y = rows[2 * l];
+          ctx.beginPath(); ctx.arc(x, y, 10, 0, 7);
+          ctx.fillStyle = l === 0 ? C("--surface") : C("--text"); ctx.fill();
+          ctx.strokeStyle = C("--text"); ctx.lineWidth = 1.5; ctx.stroke();
+          ctx.fillStyle = l === 0 ? C("--text") : C("--bg"); ctx.font = "600 12px system-ui"; ctx.textAlign = "center";
+          ctx.fillText(l === 0 ? ["x", "y"][i] : "+", x, y + 4);
+        }
+      });
+      ctx.textAlign = "start";
+    }
+    let edGeom = null;
+    function drawEditor() {
+      const ctx = ectx; ctx.clearRect(0, 0, EW, EH);
+      const b = boxes[selected]; if (!b) return;
+      const e = kan.layers[b.l][b.q][b.p];
+      const inName = b.l === 0 ? ["x", "y"][b.p] : `hidden ${b.p + 1}`;
+      document.getElementById("editor-title").textContent = `Selected edge: φ(${inName}) → ${b.l === kan.layers.length - 1 ? "output" : `hidden ${b.q + 1}`}`;
+      edGeom = { e, ...plotEdge(ctx, e, 30, 10, EW - 44, EH - 34, { ctrl: true, axes: true, lw: 3, n: 120 }) };
+      ctx.fillStyle = C("--muted"); ctx.font = "11px system-ui";
+      ctx.fillText(e.lo.toFixed(1), 26, EH - 8); ctx.fillText(e.hi.toFixed(1), EW - 30, EH - 8);
+      ctx.fillText(`input ${inName}`, EW / 2 - 24, EH - 8);
+    }
+    function drawMLP() {
+      const ctx = mctx; ctx.clearRect(0, 0, MW, MH);
+      const H = mlp.H, yI = MH - 16, yH = MH / 2, yO = 16;
+      const xI = (i) => MW * ((i + 1) / 3), xH = (j) => MW * ((j + 1) / (H + 1));
+      const wmax = Math.max(...mlp.W1.map(Math.abs), ...mlp.W2.map(Math.abs), 1e-6);
+      const line = (x0, y0, x1, y1, w) => {
+        ctx.strokeStyle = w >= 0 ? C("--accent-2") : C("--bad"); ctx.lineWidth = 0.5 + 3.5 * Math.abs(w) / wmax;
+        ctx.globalAlpha = 0.75; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke(); ctx.globalAlpha = 1;
+      };
+      for (let j = 0; j < H; j++) {
+        line(xI(0), yI, xH(j), yH, mlp.W1[2 * j]); line(xI(1), yI, xH(j), yH, mlp.W1[2 * j + 1]);
+        line(xH(j), yH, MW / 2, yO, mlp.W2[j]);
+      }
+      const node = (x, y, txt, filled) => {
+        ctx.beginPath(); ctx.arc(x, y, 9, 0, 7); ctx.fillStyle = filled ? C("--text") : C("--surface"); ctx.fill();
+        ctx.strokeStyle = C("--text"); ctx.lineWidth = 1.2; ctx.stroke();
+        ctx.fillStyle = filled ? C("--bg") : C("--text"); ctx.font = "600 10px system-ui"; ctx.textAlign = "center"; ctx.fillText(txt, x, y + 3.5);
+      };
+      node(xI(0), yI, "x"); node(xI(1), yI, "y");
+      for (let j = 0; j < H; j++) {
+        node(xH(j), yH, "", true);
+        // tiny fixed tanh glyph
+        ctx.strokeStyle = C("--bg"); ctx.lineWidth = 1.2; ctx.beginPath();
+        for (let k = -5; k <= 5; k++) { const px = xH(j) + k, py = yH - 4 * Math.tanh(k / 2.2); k === -5 ? ctx.moveTo(px, py) : ctx.lineTo(px, py); }
+        ctx.stroke();
+      }
+      node(MW / 2, yO, "+", true);
+      ctx.textAlign = "start";
+    }
+    function heat(id, vals) {
+      const cv = document.getElementById(id), ctx = cv.getContext("2d");
+      const img = ctx.createImageData(GRID, GRID);
+      const lo = hex(C("--accent-2")), mid = hex(C("--surface")), hi = hex(C("--accent"));
+      let m = 0; for (const s of test) m = Math.max(m, Math.abs(s.y));
+      vals.forEach((v, i) => {
+        const t = Math.max(-1, Math.min(1, v / m)), a = Math.abs(t), end = t < 0 ? lo : hi;
+        for (let k = 0; k < 3; k++) img.data[4 * i + k] = mid[k] + (end[k] - mid[k]) * a;
+        img.data[4 * i + 3] = 255;
+      });
+      ctx.putImageData(img, 0, 0);
+    }
+    function drawLoss() {
+      const ctx = lctx; ctx.clearRect(0, 0, LW, LH);
+      ctx.strokeStyle = C("--border"); ctx.lineWidth = 1; ctx.strokeRect(0.5, 0.5, LW - 1, LH - 1);
+      const L0 = Math.log10(1e-3), L1 = Math.log10(2);
+      const Y = (v) => LH - 4 - ((Math.log10(Math.max(1e-3, v)) - L0) / (L1 - L0)) * (LH - 8);
+      ctx.fillStyle = C("--muted"); ctx.font = "10px system-ui";
+      for (const v of [1, 0.1, 0.01]) { ctx.fillText(String(v), 4, Y(v) + 3); ctx.globalAlpha = 0.4; ctx.beginPath(); ctx.moveTo(28, Y(v)); ctx.lineTo(LW, Y(v)); ctx.stroke(); ctx.globalAlpha = 1; }
+      if (hist.length < 2) return;
+      for (const [k, col] of [["rk", "--accent"], ["rm", "--accent-2"]]) {
+        ctx.strokeStyle = C(col); ctx.lineWidth = 2; ctx.beginPath();
+        hist.forEach((h, i) => { const x = 28 + ((LW - 32) * i) / (hist.length - 1); i ? ctx.lineTo(x, Y(h[k])) : ctx.moveTo(x, Y(h[k])); });
+        ctx.stroke();
+      }
+    }
+    let targetDrawn = null;
+    function drawAll(full) {
+      if (!kctx) return;
+      const ev = evaluate();
+      if (full || targetDrawn !== target) { heat("m-target", test.map((s) => s.y)); targetDrawn = target; }
+      heat("m-kan", ev.pk); heat("m-mlp", ev.pm);
+      document.getElementById("kan-rmse").textContent = ev.rk.toFixed(3);
+      document.getElementById("mlp-rmse").textContent = ev.rm.toFixed(3);
+      drawKAN(); drawEditor(); drawMLP(); drawLoss();
+      return ev;
+    }
+
+    // ---------- loop ----------
+    let running = true, frame = 0;
+    function loop() {
+      if (running && !dragging) {
+        const t0 = performance.now();
+        while (performance.now() - t0 < 8) trainStep();
+      }
+      frame++;
+      if (frame % 20 === 1) updateSymbols();
+      if (running || dragging || frame % 10 === 0) {
+        const ev = drawAll(false);
+        if (running && !dragging && frame % 4 === 0) { hist.push({ rk: ev.rk, rm: ev.rm }); if (hist.length > 400) hist = hist.filter((_, i) => i % 2 === 0); }
+      }
+      requestAnimationFrame(loop);
+    }
+
+    // ---------- interaction ----------
+    kc.addEventListener("pointerdown", (e) => {
+      const r = kc.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+      const i = boxes.findIndex((b) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
+      if (i >= 0) { selected = i; drawAll(false); }
+    });
+    let dragging = false, dragIdx = -1;
+    const eLocal = (ev) => { const r = ec.getBoundingClientRect(); return [ev.clientX - r.left, ev.clientY - r.top]; };
+    ec.addEventListener("pointerdown", (ev) => {
+      if (!edGeom) return;
+      const [px] = eLocal(ev);
+      let best = 0, bd = Infinity;
+      edGeom.e.xi.forEach((u, i) => { const d = Math.abs(edGeom.X(u) - px); if (d < bd) { bd = d; best = i; } });
+      dragIdx = best; dragging = true; ec.setPointerCapture(ev.pointerId);
+    });
+    ec.addEventListener("pointermove", (ev) => {
+      if (!dragging) return;
+      const [, py] = eLocal(ev), g = edGeom;
+      const v = g.lo + ((10 + (EH - 34) - py) / (EH - 34)) * (g.hi - g.lo);
+      g.e.c[dragIdx] = v;
+      g.e.m[dragIdx] = 0; g.e.v[dragIdx] = 0;
+      drawKAN(); const ev2 = evaluate(); heat("m-kan", ev2.pk);
+      document.getElementById("kan-rmse").textContent = ev2.rk.toFixed(3);
+      // redraw editor without rescaling the y axis while dragging
+      ectx.clearRect(0, 0, EW, EH);
+      const e = g.e, N = 120;
+      ectx.strokeStyle = C("--muted"); ectx.setLineDash([3, 3]); ectx.lineWidth = 1; ectx.beginPath();
+      e.c.forEach((cv, i) => (i ? ectx.lineTo(g.X(e.xi[i]), g.Y(cv)) : ectx.moveTo(g.X(e.xi[i]), g.Y(cv)))); ectx.stroke(); ectx.setLineDash([]);
+      ectx.strokeStyle = C("--accent"); ectx.lineWidth = 3; ectx.beginPath();
+      for (let i = 0; i < N; i++) { const u = e.lo + ((e.hi - e.lo) * i) / (N - 1); i ? ectx.lineTo(g.X(u), g.Y(e.f(u))) : ectx.moveTo(g.X(u), g.Y(e.f(u))); }
+      ectx.stroke();
+      e.c.forEach((cv, i) => { ectx.beginPath(); ectx.arc(g.X(e.xi[i]), g.Y(cv), i === dragIdx ? 8 : 6, 0, 7); ectx.fillStyle = i === dragIdx ? C("--accent-2") : C("--surface"); ectx.fill(); ectx.strokeStyle = C("--accent-2"); ectx.lineWidth = 2; ectx.stroke(); });
+    });
+    const endDrag = () => { if (dragging) { dragging = false; updateSymbols(); drawAll(false); } };
+    ec.addEventListener("pointerup", endDrag);
+    ec.addEventListener("pointercancel", endDrag);
+
+    const playBtn = document.getElementById("play");
+    playBtn.addEventListener("click", () => { running = !running; playBtn.textContent = running ? "Pause" : "Train"; });
+    document.getElementById("reset").addEventListener("click", () => { setup(document.getElementById("target").value); updateSymbols(); drawAll(true); });
+    document.getElementById("target").addEventListener("change", (e) => { setup(e.target.value); updateSymbols(); drawAll(true); });
+
+    setup("exp");
+    updateSymbols();
+    addEventListener("resize", resize);
+    Demo.onTheme(resize);
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>

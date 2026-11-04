@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mamba: Selective State Spaces · Paper → Playground</title>
+  <meta name="description" content="Run one sequence through a fixed and a selective state space model and see which one remembers what matters.">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="../_shared/demo.css">
+  <script type="module" src="../_shared/demo.js"></script>
+  <style>
+    .answers { display: grid; grid-template-columns: auto auto 1fr; gap: 4px 10px; align-items: center; font-size: 14px; margin-top: 8px; }
+    .chip { display: inline-block; width: 16px; height: 16px; border-radius: 4px; vertical-align: middle; border: 1px solid var(--border); }
+    .ok { color: var(--good); font-weight: 600; }
+    .no { color: var(--bad); font-weight: 600; }
+    .cap { font-size: 13px; color: var(--muted); margin: 6px 0 0; }
+    .controls label { flex-wrap: wrap; }
+    .controls input[type=range] { min-width: 0; max-width: 150px; }
+    .eq { font-family: var(--mono); font-size: 12.5px; background: var(--surface); border-radius: 6px; padding: 6px 10px; margin-top: 8px; overflow-wrap: anywhere; line-height: 1.7; }
+  </style>
+</head>
+<body>
+  <header data-paper-header></header>
+  <main>
+    <section id="demo" aria-label="Interactive selective state space demo">
+      <div class="demo-grid">
+        <div class="panel">
+          <h3>Task: which colour appeared last? (filler tokens are distractors)</h3>
+          <canvas id="tape" aria-label="A sequence of tokens from left to right: a few coloured tokens (red, green, blue) among many grey filler tokens. Below it, two models scan the sequence. For each, a bar per token shows how strongly the token is written into the hidden state, and a column of three bars shows the hidden state after that token. The top model uses a fixed step size; the bottom (selective) model computes the step size from each token."></canvas>
+          <div class="answers" id="answers"></div>
+          <p class="cap">Tap a token to cycle it: filler → red → green → blue. The cursor replays the scan left to right.</p>
+        </div>
+        <div class="panel">
+          <h3>Accuracy over 500 random sequences</h3>
+          <canvas id="acc" aria-label="Chart of accuracy against the fixed step size Δ on a log scale. The fixed-Δ model's accuracy (orange curve) stays far below the selective model's accuracy (green horizontal line) for every Δ. A dashed line marks chance at one third."></canvas>
+          <div class="controls">
+            <label>Fixed Δ <input type="range" id="delta" min="0" max="40" step="1" value="16"><span class="readout" id="delta-readout"></span></label>
+            <label>Filler after last colour <input type="range" id="gap" min="0" max="20" step="1" value="6"><span class="readout" id="gap-readout"></span></label>
+            <button class="btn primary" id="new" type="button">New random sequence</button>
+            <button class="btn" id="replay" type="button">Replay scan</button>
+          </div>
+          <div class="eq" id="eq"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="explainer">
+      <h2>The idea in 60 seconds</h2>
+      <p>A recurrent model reads a sequence one token at a time and squeezes everything it has seen into a
+        fixed-size <strong>hidden state</strong>. That is what makes it fast (constant memory per step, linear time
+        overall), but it also means the state must decide what to keep. Classic state space models (SSMs) like S4
+        update the state with the <em>same</em> rule for every token: h ← Ā·h + B̄·x. The step size Δ that sets
+        Ā = e<sup>−Δ</sup> (how much is forgotten) and B̄ = 1 − e<sup>−Δ</sup> (how much is written) is a fixed
+        number, independent of what the token says.</p>
+      <p>That is a problem whenever only some tokens matter. With a <strong>small fixed Δ</strong> the state
+        remembers a long way back, but every filler token leaks in and old colours never fully fade. With a
+        <strong>large fixed Δ</strong> each token overwrites the state, so by the end it holds only the last filler.
+        No single setting works, which is what the accuracy curve on the right shows.</p>
+      <p>Mamba's fix is to make Δ (and B and C) <strong>functions of the current token</strong>. Here
+        Δ<sub>t</sub> = softplus(w·x<sub>t</sub> + b): for a filler token Δ is near zero, so the state is left
+        untouched and the token is effectively skipped; for a colour token Δ is large, so the old state is reset
+        and the new colour is written in. The paper shows this is exactly a classic RNN gate in disguise
+        (its Theorem 1), and calls it the <strong>selection mechanism</strong>.</p>
+      <p>The catch is that an input-dependent rule can no longer be computed as one big convolution, which is
+        how S4 trained quickly. Much of the paper is a hardware-aware parallel scan that keeps the selective
+        version fast on GPUs.</p>
+      <div class="try">
+        <h3>Try this</h3>
+        <ul>
+          <li>Look at the write-gate bars: the fixed model writes every token equally, while the selective model writes only the colours. Its state column stays one solid colour across the whole filler stretch.</li>
+          <li>Drag <strong>Fixed Δ</strong> from left to right and watch the fixed model's state: at small Δ it is a murky blend of everything, at large Δ it flickers with each filler. Its accuracy peaks somewhere in the middle and stays well below the selective model.</li>
+          <li>Set <strong>Filler after last colour</strong> to 0: the colour is now the very last token, so a large fixed Δ ("always overwrite") scores 100%. Add just 3 filler tokens and the best fixed Δ falls to about two thirds; with 10 or more it hovers around half. The selective model stays at 100% whatever the gap.</li>
+          <li>Tap a filler right after the last colour to turn it into a different colour: only the selective model's answer follows it immediately.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="simplifications">
+      <h2>How this demo simplifies the paper</h2>
+      <ul>
+        <li>The weights are set by hand, not learned: w puts a large weight on an "is this a colour?" feature, so Δ ≈ 4 for colours and Δ ≈ 0.0025 for filler. A trained Mamba has to discover such a rule from data (the paper's Selective Copying and Induction Heads tasks test exactly this).</li>
+        <li>Only Δ is selective here. In Mamba, B and C are also computed from the input, which lets the model choose which state dimensions to write into and read from.</li>
+        <li>The model has 3 channels with a single state dimension each (N = 1, A = −1, B = C = 1), which is the setting of the paper's Theorem 1. Real Mamba blocks use thousands of channels, N = 16 state dimensions per channel, learned A, a short convolution, a gating branch and stacked layers.</li>
+        <li>The answer is read off as the strongest channel of the final state, instead of through a learned output layer.</li>
+        <li>The scan is a plain loop in JavaScript. The paper's main engineering contribution, a fused, hardware-aware parallel scan on GPUs, is not shown.</li>
+      </ul>
+    </section>
+  </main>
+
+  <script type="module">
+    // ---------- RNG ----------
+    let seed = 99;
+    const rand = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 2 ** 32; };
+
+    // ---------- tokens ----------
+    // x = [ch1, ch2, ch3, isColour]. Colours are one-hot; filler tokens are random distractors in all three channels.
+    const L = 28, COLOURS = 3;
+    const colourToken = (c) => ({ kind: c, x: [c === 0 ? 1 : 0, c === 1 ? 1 : 0, c === 2 ? 1 : 0, 1] });
+    const fillerToken = () => ({ kind: -1, x: [rand(), rand(), rand(), 0] });
+    function randomSeq(gap) {
+      const seq = [];
+      const lastPos = L - 1 - gap;
+      for (let i = 0; i < L; i++) {
+        if (i === lastPos) seq.push(colourToken(Math.floor(rand() * COLOURS)));
+        else if (i < lastPos && rand() < 0.22) seq.push(colourToken(Math.floor(rand() * COLOURS)));
+        else seq.push(fillerToken());
+      }
+      return seq;
+    }
+    const truth = (seq) => { for (let i = seq.length - 1; i >= 0; i--) if (seq[i].kind >= 0) return seq[i].kind; return -1; };
+
+    // ---------- the SSM: per channel, N=1, A=-1, B=C=1, zero-order-hold discretisation ----------
+    const softplus = (v) => (v > 20 ? v : Math.log1p(Math.exp(v)));
+    const W_DELTA = [0, 0, 0, 10], B_DELTA = -6;               // hand-set selection weights
+    const deltaSelective = (x) => softplus(W_DELTA.reduce((s, w, i) => s + w * x[i], B_DELTA));
+    function scan(seq, deltaOf) {
+      const h = [0, 0, 0], out = [];
+      for (const tok of seq) {
+        const d = deltaOf(tok.x);
+        const Abar = Math.exp(-d), Bbar = 1 - Abar;          // exp(ΔA) and (ΔA)^-1 (exp(ΔA) - 1) ΔB with A=-1, B=1
+        for (let c = 0; c < 3; c++) h[c] = Abar * h[c] + Bbar * tok.x[c];
+        out.push({ delta: d, gate: Bbar, h: [...h] });
+      }
+      return out;
+    }
+    const answer = (h) => h.indexOf(Math.max(...h));          // y = C h with C = I, read the strongest channel
+
+    // ---------- state ----------
+    const dSlider = document.getElementById("delta"), gSlider = document.getElementById("gap");
+    const deltaFixed = () => 10 ** (-3 + (4 * Number(dSlider.value)) / 40);   // 0.001 .. 10
+    let seq = randomSeq(Number(gSlider.value));
+    let cursor = 0, lastTick = 0;
+
+    // ---------- accuracy sweep ----------
+    const NSEQ = 500;
+    let sweep = null;
+    function computeSweep() {
+      const gap = Number(gSlider.value);
+      const s0 = seed; seed = 4242 + gap;
+      const seqs = Array.from({ length: NSEQ }, () => randomSeq(gap));
+      seed = s0;
+      const acc = (deltaOf) => seqs.reduce((n, s) => { const r = scan(s, deltaOf); return n + (answer(r[r.length - 1].h) === truth(s) ? 1 : 0); }, 0) / NSEQ;
+      const pts = [];
+      for (let i = 0; i <= 40; i++) { const d = 10 ** (-3 + (4 * i) / 40); pts.push([d, acc(() => d)]); }
+      sweep = { pts, sel: acc(deltaSelective) };
+    }
+
+    // ---------- drawing ----------
+    const tc = document.getElementById("tape"), ac = document.getElementById("acc");
+    let tctx, actx, TW, TH, AW, AH;
+    const C = (n) => Demo.color(n);
+    const CH = () => [C("--bad"), C("--good"), C("--accent-2")];
+    const LEFT = 0, TOP = 6, TOKH = 26, GATEH = 28, STH = 46, LBL = 16, SUB = 13, BLOCK = LBL + SUB + GATEH + 4 + SUB + STH + 10;
+    function resize() {
+      TW = Math.max(270, tc.parentElement.clientWidth - 24);
+      TH = TOP + TOKH + 10 + 2 * BLOCK;
+      tctx = Demo.hiDPI(tc, TW, TH);
+      AW = Math.max(240, ac.parentElement.clientWidth - 24); AH = 180;
+      actx = Demo.hiDPI(ac, AW, AH);
+      draw();
+    }
+    const colW = () => (TW - LEFT) / L;
+    function drawTape() {
+      const ctx = tctx; ctx.clearRect(0, 0, TW, TH);
+      const cw = colW(), ch = CH();
+      // tokens
+      seq.forEach((tok, i) => {
+        const x = LEFT + i * cw, pad = Math.max(1, cw * 0.1);
+        if (tok.kind >= 0) {
+          ctx.fillStyle = ch[tok.kind];
+          ctx.beginPath(); ctx.roundRect(x + pad, TOP, cw - 2 * pad, TOKH, 3); ctx.fill();
+        } else {
+          ctx.fillStyle = C("--border");
+          ctx.beginPath(); ctx.roundRect(x + pad, TOP + 5, cw - 2 * pad, TOKH - 10, 3); ctx.fill();
+          // its distractor values in each channel
+          for (let c = 0; c < 3; c++) {
+            const bw = (cw - 2 * pad) / 3, bh = (TOKH - 14) * tok.x[c];
+            ctx.fillStyle = ch[c]; ctx.globalAlpha = 0.45;
+            ctx.fillRect(x + pad + c * bw, TOP + TOKH - 7 - bh, bw, bh); ctx.globalAlpha = 1;
+          }
+        }
+      });
+      // cursor
+      const cx = LEFT + Math.min(cursor, L - 1) * cw;
+      ctx.strokeStyle = C("--text"); ctx.lineWidth = 1.5;
+      ctx.strokeRect(cx + 0.5, 1, cw - 1, TH - 2);
+      const models = [
+        { name: `Fixed Δ = ${fmt(deltaFixed())} for every token (like S4)`, res: scan(seq, deltaFixed) },
+        { name: "Selective: Δ = softplus(w·x + b) depends on the token (Mamba)", res: scan(seq, deltaSelective) },
+      ];
+      models.forEach((m, k) => {
+        const y0 = TOP + TOKH + 10 + k * BLOCK;
+        ctx.fillStyle = C("--text"); ctx.font = "600 12px system-ui";
+        ctx.fillText(m.name, LEFT + 2, y0 + 11, TW - 4);
+        const gy = y0 + LBL + SUB, sy = gy + GATEH + 4 + SUB;
+        ctx.fillStyle = C("--surface"); ctx.fillRect(LEFT, gy, TW - LEFT, GATEH); ctx.fillRect(LEFT, sy, TW - LEFT, STH);
+        for (let i = 0; i <= Math.min(cursor, L - 1); i++) {
+          const r = m.res[i], x = LEFT + i * cw;
+          // write gate 1 - exp(-Δ)
+          ctx.fillStyle = k ? C("--good") : C("--accent");
+          const gh = Math.max(1, r.gate * (GATEH - 3));
+          ctx.fillRect(x + cw * 0.2, gy + GATEH - gh, cw * 0.6, gh);
+          // hidden state: three channel bars
+          const bw = (cw - 2) / 3;
+          for (let c = 0; c < 3; c++) {
+            const bh = Math.max(0, Math.min(1, r.h[c])) * (STH - 4);
+            ctx.fillStyle = CH()[c];
+            ctx.fillRect(x + 1 + c * bw, sy + STH - 2 - bh, bw - 0.5, bh);
+          }
+        }
+        ctx.fillStyle = C("--muted"); ctx.font = "10px system-ui";
+        ctx.fillText("write gate 1 − e^(−Δ) for each token", LEFT + 2, gy - 3);
+        ctx.fillText("hidden state h after each token (3 channels)", LEFT + 2, sy - 3);
+        m.final = answer(m.res[L - 1].h);
+      });
+      return models;
+    }
+    function fmt(d) { return d >= 1 ? d.toFixed(1) : d >= 0.1 ? d.toFixed(2) : d.toFixed(3); }
+    function drawAcc() {
+      const ctx = actx; ctx.clearRect(0, 0, AW, AH);
+      if (!sweep) return;
+      const L0 = 34, R0 = AW - 8, T0 = 8, B0 = AH - 26;
+      const X = (d) => L0 + ((Math.log10(d) + 3) / 4) * (R0 - L0), Y = (a) => B0 - a * (B0 - T0);
+      ctx.strokeStyle = C("--border"); ctx.lineWidth = 1; ctx.strokeRect(L0, T0, R0 - L0, B0 - T0);
+      ctx.fillStyle = C("--muted"); ctx.font = "10px system-ui";
+      for (const a of [0, 0.5, 1]) ctx.fillText(`${a * 100}%`, 2, Y(a) + 3);
+      for (const d of [0.001, 0.01, 0.1, 1, 10]) ctx.fillText(String(d), X(d) - 8, B0 + 12);
+      ctx.fillText("fixed Δ (log scale)", (L0 + R0) / 2 - 40, AH - 2);
+      // chance
+      ctx.setLineDash([4, 4]); ctx.strokeStyle = C("--muted");
+      ctx.beginPath(); ctx.moveTo(L0, Y(1 / 3)); ctx.lineTo(R0, Y(1 / 3)); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillText("chance", R0 - 40, Y(1 / 3) - 4);
+      // selective
+      ctx.strokeStyle = C("--good"); ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.moveTo(L0, Y(sweep.sel)); ctx.lineTo(R0, Y(sweep.sel)); ctx.stroke();
+      ctx.fillStyle = C("--good"); ctx.font = "600 11px system-ui";
+      ctx.fillText(`selective ${(sweep.sel * 100).toFixed(0)}%`, L0 + 6, Y(sweep.sel) + (sweep.sel > 0.9 ? 14 : -5));
+      // fixed
+      ctx.strokeStyle = C("--accent"); ctx.lineWidth = 2.5; ctx.beginPath();
+      sweep.pts.forEach(([d, a], i) => (i ? ctx.lineTo(X(d), Y(a)) : ctx.moveTo(X(d), Y(a))));
+      ctx.stroke();
+      const best = sweep.pts.reduce((b, p) => (p[1] > b[1] ? p : b));
+      const cur = deltaFixed(), curAcc = sweep.pts[Number(dSlider.value)][1];
+      ctx.fillStyle = C("--accent");
+      ctx.beginPath(); ctx.arc(X(cur), Y(curAcc), 5, 0, 7); ctx.fill();
+      ctx.font = "600 11px system-ui";
+      ctx.fillText(`fixed: best ${(best[1] * 100).toFixed(0)}%`, L0 + 6, Y(Math.min(0.8, best[1])) + 16);
+      document.getElementById("eq").innerHTML =
+        `Ā = e<sup>−Δ</sup>, B̄ = 1 − e<sup>−Δ</sup>, h<sub>t</sub> = Ā h<sub>t−1</sub> + B̄ x<sub>t</sub><br>` +
+        `fixed: Δ = ${fmt(cur)} → keeps ${(Math.exp(-cur) * 100).toFixed(1)}% of h per token, accuracy ${(curAcc * 100).toFixed(0)}%<br>` +
+        `selective: Δ(filler) = ${fmt(deltaSelective([0.5, 0.5, 0.5, 0]))}, Δ(colour) = ${fmt(deltaSelective([1, 0, 0, 1]))}`;
+    }
+    function drawAnswers(models) {
+      const ch = CH(), t = truth(seq);
+      const chip = (k) => (k < 0 ? "–" : `<span class="chip" style="background:${ch[k]}"></span>`);
+      const row = (label, k) => `<span>${label}</span>${chip(k)}<span class="${k === t ? "ok" : "no"}">${cursor >= L - 1 ? (k === t ? "✓ correct" : "✗ wrong") : "…scanning"}</span>`;
+      document.getElementById("answers").innerHTML =
+        `<span>Last colour (truth)</span>${chip(t)}<span></span>` + row("Fixed Δ answers", models[0].final) + row("Selective answers", models[1].final);
+    }
+    function draw() {
+      if (!tctx) return;
+      const models = drawTape();
+      drawAnswers(models);
+      drawAcc();
+      document.getElementById("delta-readout").textContent = fmt(deltaFixed());
+      document.getElementById("gap-readout").textContent = gSlider.value;
+    }
+
+    // ---------- scan animation ----------
+    function loop(now) {
+      if (cursor < L - 1 && now - lastTick > 70) { cursor++; lastTick = now; draw(); }
+      requestAnimationFrame(loop);
+    }
+    const replay = () => { cursor = 0; draw(); };
+
+    // ---------- interaction ----------
+    tc.addEventListener("pointerdown", (e) => {
+      const r = tc.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+      if (y > TOP + TOKH + 4) return;
+      const i = Math.floor((x - LEFT) / colW());
+      if (i < 0 || i >= L) return;
+      const k = seq[i].kind;
+      seq[i] = k === 2 ? fillerToken() : colourToken(k + 1);
+      cursor = L - 1; draw();
+    });
+    dSlider.addEventListener("input", draw);
+    gSlider.addEventListener("input", () => { computeSweep(); seq = randomSeq(Number(gSlider.value)); replay(); });
+    document.getElementById("new").addEventListener("click", () => { seq = randomSeq(Number(gSlider.value)); replay(); });
+    document.getElementById("replay").addEventListener("click", replay);
+
+    computeSweep();
+    addEventListener("resize", resize);
+    Demo.onTheme(resize);
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>

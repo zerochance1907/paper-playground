@@ -1,0 +1,36 @@
+{
+  "arxiv": "2312.00752",
+  "title": "Mamba: Linear-Time Sequence Modeling with Selective State Spaces",
+  "authors": [
+    "Albert Gu",
+    "Tri Dao"
+  ],
+  "year": 2023,
+  "url": "https://arxiv.org/abs/2312.00752",
+  "one_liner": "Run one sequence through a fixed and a selective state space model and see which one remembers what matters.",
+  "tags": [
+    "sequence-models",
+    "architectures"
+  ],
+  "difficulty": "intermediate",
+  "interaction": [
+    {
+      "action": "click",
+      "selector": "#new"
+    },
+    {
+      "action": "range",
+      "selector": "#delta",
+      "value": 20
+    },
+    {
+      "action": "range",
+      "selector": "#gap",
+      "value": 14
+    },
+    {
+      "action": "wait",
+      "ms": 4000
+    }
+  ]
+}
