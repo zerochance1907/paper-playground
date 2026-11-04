@@ -1,0 +1,33 @@
+{
+  "arxiv": "1412.6980",
+  "title": "Adam: A Method for Stochastic Optimization",
+  "authors": [
+    "Diederik P. Kingma",
+    "Jimmy Ba"
+  ],
+  "year": 2014,
+  "url": "https://arxiv.org/abs/1412.6980",
+  "one_liner": "Race SGD, momentum, RMSProp and Adam on a loss surface, then rescale gradients and see who doesn't care.",
+  "tags": [
+    "optimization"
+  ],
+  "difficulty": "intermediate",
+  "interaction": [
+    {
+      "action": "drag",
+      "selector": "#surface",
+      "from": [
+        0.08,
+        0.12
+      ],
+      "to": [
+        0.08,
+        0.12
+      ]
+    },
+    {
+      "action": "wait",
+      "ms": 3000
+    }
+  ]
+}
