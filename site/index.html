@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Paper → Playground</title>
+  <meta name="description" content="Landmark AI and robotics papers, each turned into a small interactive demo you can play with in your browser.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧪</text></svg>">
+  <link rel="stylesheet" href="papers/_shared/demo.css">
+  <style>
+    .hero { max-width: 1080px; margin: 0 auto; padding: 48px 16px 16px; }
+    .hero h1 { font-size: clamp(32px, 6vw, 52px); margin: 0 0 10px; letter-spacing: -0.02em; }
+    .hero h1 span { color: var(--accent); }
+    .hero p { color: var(--muted); font-size: 18px; max-width: 640px; margin: 0 0 20px; }
+    .cta { display: inline-flex; gap: 10px; flex-wrap: wrap; }
+    .cta a { text-decoration: none; padding: 9px 16px; border-radius: 10px; font-size: 15px; border: 1px solid var(--border); color: var(--text); background: var(--surface); }
+    .cta a.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 24px 0 18px; }
+    .filters input { flex: 1 1 220px; font: inherit; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+    .chip { font: inherit; font-size: 13px; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); cursor: pointer; }
+    .chip[aria-pressed="true"] { background: var(--text); color: var(--bg); border-color: var(--text); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 18px; }
+    .card { display: flex; flex-direction: column; text-decoration: none; color: inherit; background: var(--surface); border: 1px solid var(--border);
+      border-radius: 14px; overflow: hidden; transition: transform .15s ease, box-shadow .15s ease; }
+    .card:hover { transform: translateY(-3px); box-shadow: 0 10px 30px rgba(0,0,0,.12); }
+    .thumb { aspect-ratio: 16 / 10; background: var(--surface-2) center / cover no-repeat; border-bottom: 1px solid var(--border); }
+    .thumb.none { display: grid; place-items: center; font-size: 40px; }
+    .body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+    .body h2 { font-size: 17px; margin: 0; }
+    .body .meta { color: var(--muted); font-size: 13px; }
+    .body p { margin: 0; font-size: 14px; flex: 1; }
+    .tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+    .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+    footer { color: var(--muted); font-size: 13px; margin-top: 48px; border-top: 1px solid var(--border); padding-top: 16px; }
+  </style>
+</head>
+<body>
+  <div class="hero">
+    <h1>Paper <span>→</span> Playground</h1>
+    <p>Landmark AI and robotics papers, each turned into a small interactive demo. Don't just read about attention, diffusion or PPO: drag, poke and watch the core idea respond.</p>
+    <div class="cta">
+      <a class="primary" href="https://github.com/zerochance1907/paper-playground/issues/new?template=add-paper.yml">＋ Request a paper</a>
+      <a href="https://github.com/zerochance1907/paper-playground">How it's built ↗</a>
+    </div>
+  </div>
+  <main>
+    <div class="filters" role="search">
+      <input id="q" type="search" placeholder="Search papers, ideas, authors…" aria-label="Search papers">
+      <div id="chips" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+    </div>
+    <div class="grid" id="grid"></div>
+    <p class="empty" id="empty" hidden>No papers match that search.</p>
+    <footer>Each demo is a simplified illustration of a paper's core idea, with a note on exactly what was simplified. Built with Claude Code; every demo is checked in a real browser before it's published. MIT licensed.</footer>
+  </main>
+  <script>
+    const PAPERS = /*PAPERS*/[];
+    const grid = document.getElementById("grid"), q = document.getElementById("q");
+    const tags = [...new Set(PAPERS.flatMap((p) => p.tags))].sort();
+    let active = null;
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    document.getElementById("chips").innerHTML = ["all", ...tags].map((t) =>
+      `<button class="chip" data-tag="${esc(t)}" aria-pressed="${t === "all"}">${esc(t)}</button>`).join("");
+    document.getElementById("chips").addEventListener("click", (e) => {
+      const b = e.target.closest(".chip"); if (!b) return;
+      active = b.dataset.tag === "all" ? null : b.dataset.tag;
+      document.querySelectorAll(".chip").forEach((c) => c.setAttribute("aria-pressed", String(c === b)));
+      render();
+    });
+    q.addEventListener("input", render);
+    function render() {
+      const term = q.value.trim().toLowerCase();
+      const shown = PAPERS.filter((p) => (!active || p.tags.includes(active)) &&
+        (!term || [p.title, p.one_liner, p.authors.join(" "), p.tags.join(" ")].join(" ").toLowerCase().includes(term)));
+      grid.innerHTML = shown.map((p) => `
+        <a class="card" href="papers/${esc(p.slug)}/index.html">
+          <div class="thumb${p.thumb ? "" : " none"}" ${p.thumb ? `style="background-image:url('papers/${esc(p.slug)}/thumb.png')"` : ""} role="img" aria-label="Preview of the ${esc(p.title)} demo">${p.thumb ? "" : "🧪"}</div>
+          <div class="body">
+            <h2>${esc(p.title)}</h2>
+            <div class="meta">${esc(p.authors[0])}${p.authors.length > 1 ? " et al." : ""} · ${esc(p.year)} · ${esc(p.difficulty)}</div>
+            <p>${esc(p.one_liner)}</p>
+            <div class="tags">${p.tags.map((t) => `<span class="tag">${esc(t)}</span>`).join("")}</div>
+          </div>
+        </a>`).join("");
+      document.getElementById("empty").hidden = shown.length > 0;
+    }
+    render();
+  </script>
+</body>
+</html>

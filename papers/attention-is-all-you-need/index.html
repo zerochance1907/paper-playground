@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Attention Is All You Need · Paper → Playground</title>
+  <meta name="description" content="Drag word vectors and watch scaled dot-product attention re-weight them live.">
+  <link rel="stylesheet" href="../_shared/demo.css">
+  <script type="module" src="../_shared/demo.js"></script>
+  <style>
+    .matrix { display: grid; gap: 2px; font-size: 12px; margin-top: 4px; }
+    .matrix div { aspect-ratio: 1; display: grid; place-items: center; border-radius: 4px; font-family: var(--mono); font-size: 11px; }
+    .matrix .lbl { aspect-ratio: auto; color: var(--muted); font-family: inherit; }
+    .bars { display: grid; gap: 4px; margin-top: 6px; }
+    .bar { display: grid; grid-template-columns: 44px 1fr 46px; align-items: center; gap: 8px; font-size: 13px; }
+    .bar .track { background: var(--surface); border-radius: 4px; height: 14px; overflow: hidden; }
+    .bar .fill { height: 100%; background: var(--accent); }
+    .bar .num { font-family: var(--mono); font-size: 12px; color: var(--muted); text-align: right; }
+    .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .compare h4 { margin: 0 0 4px; font-size: 13px; }
+    .mini { display: flex; align-items: flex-end; gap: 3px; height: 90px; background: var(--surface); border-radius: 6px; padding: 6px; }
+    .mini span { flex: 1; background: var(--accent-2); border-radius: 2px 2px 0 0; min-height: 1px; }
+    .mini.unscaled span { background: var(--bad); }
+  </style>
+</head>
+<body>
+  <header data-paper-header></header>
+  <main>
+    <section id="demo" aria-label="Interactive attention demo">
+      <div class="demo-grid">
+        <div class="panel">
+          <h3>1 · Self-attention you can touch</h3>
+          <canvas id="plane" aria-label="Five word vectors on a 2D plane. The selected query word draws lines to every word, thicker for higher attention weight, and an arrow shows the weighted average output."></canvas>
+          <div class="controls">
+            <span class="readout" id="query-readout"></span>
+            <button class="btn" id="mask-toggle" aria-pressed="false" type="button">Causal mask (decoder)</button>
+            <button class="btn" id="reset" type="button">Reset words</button>
+          </div>
+          <p class="readout" style="margin:8px 0 0">Drag a word to move its vector · tap a word to make it the query</p>
+        </div>
+        <div class="panel">
+          <h3>Weights for the query: softmax(q·k / √d)</h3>
+          <div class="bars" id="bars"></div>
+          <h3 style="margin-top:14px">Full attention matrix (row = query, column = key)</h3>
+          <div class="matrix" id="matrix" aria-label="Attention matrix"></div>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top:16px">
+        <h3>2 · Why divide by √d?</h3>
+        <div class="controls" style="margin-top:0">
+          <label>Vector dimension d <input type="range" id="dim" min="1" max="10" step="1" value="3"></label>
+          <span class="readout" id="dim-readout"></span>
+          <button class="btn" id="resample" type="button">New random vectors</button>
+        </div>
+        <div class="compare" style="margin-top:10px">
+          <div>
+            <h4 style="color:var(--bad)">Without scaling: softmax(q·k)</h4>
+            <div class="mini unscaled" id="unscaled"></div>
+            <p class="readout" id="unscaled-readout"></p>
+          </div>
+          <div>
+            <h4 style="color:var(--accent-2)">With scaling: softmax(q·k / √d)</h4>
+            <div class="mini" id="scaled"></div>
+            <p class="readout" id="scaled-readout"></p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="explainer">
+      <h2>The idea in 60 seconds</h2>
+      <p>Before this paper, language models mostly read a sentence one word at a time,
+        passing a memory along like a game of telephone. Attention lets <strong>every word look
+        directly at every other word</strong> in one step, so long-range connections are easy and
+        the whole sentence can be processed in parallel.</p>
+      <p>Each word plays three roles. As a <strong>query</strong> it asks "what am I looking for?",
+        as a <strong>key</strong> it advertises "here's what I am", and as a <strong>value</strong> it carries
+        the information to hand over. The match between a query and a key is their dot product.
+        Softmax turns the scores into weights that add up to 1, and the word's new representation
+        is the weighted average of all the values.</p>
+      <p>The paper's small but crucial trick is dividing the scores by <strong>√d</strong>. In d
+        dimensions, dot products of random vectors grow like √d, so without scaling the softmax
+        saturates into a near one-hot choice and its gradients vanish. Panel 2 shows exactly this.</p>
+      <p>When generating text, a word must not peek at words that come after it. The decoder
+        applies a <strong>causal mask</strong>, setting those scores to −∞, so their weights become zero.
+        The full Transformer stacks this operation many times, with several "heads" in parallel,
+        each learning its own way to form queries, keys and values.</p>
+      <div class="try">
+        <h3>Try this</h3>
+        <ul>
+          <li>Drag <strong>mat</strong> right next to <strong>cat</strong>, then tap <strong>cat</strong>: most of its attention moves to <em>mat</em>.</li>
+          <li>Drag a word far from the centre. Longer vectors produce bigger dot products, so the weights get sharper.</li>
+          <li>Turn on <strong>Causal mask</strong>: the upper-right triangle of the matrix goes to zero, because no word can attend to a later word.</li>
+          <li>In panel 2, slide d up to 1024: the unscaled softmax collapses onto a single key, while the scaled one stays informative.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="simplifications">
+      <h2>How this demo simplifies the paper</h2>
+      <ul>
+        <li>Word vectors are 2D and placed by hand (you move them); the paper learns 512-dimensional embeddings.</li>
+        <li>Queries, keys and values are the word vectors themselves. The paper first multiplies them by learned matrices W<sub>Q</sub>, W<sub>K</sub>, W<sub>V</sub>.</li>
+        <li>One attention head instead of eight, and no positional encodings, residual connections, layer norm or feed-forward layers.</li>
+        <li>Panel 2 uses random Gaussian vectors to show the scaling effect. It is the paper's argument (section 3.2.1), not a measurement from a trained model.</li>
+      </ul>
+    </section>
+  </main>
+
+  <script type="module">
+    const WORDS = ["the", "cat", "sat", "on", "mat"];
+    const START = [[-0.3, 1.0], [1.1, 0.35], [0.3, -0.95], [-1.0, -0.2], [1.25, -0.05]];
+    const D_MODEL = 2;
+    let pts = START.map((p) => [...p]);
+    let query = 1, masked = false, dragging = -1, moved = false;
+
+    const canvas = document.getElementById("plane");
+    let ctx, W = 0, H = 0;
+    const SCALE = () => Math.min(W, H) / 4.4;  // plane spans about [-2.2, 2.2]
+    const toPx = ([x, y]) => [W / 2 + x * SCALE(), H / 2 - y * SCALE()];
+    const toPlane = (px, py) => [(px - W / 2) / SCALE(), -(py - H / 2) / SCALE()];
+
+    function softmax(xs) {
+      const m = Math.max(...xs.filter((x) => x > -Infinity));
+      const e = xs.map((x) => (x === -Infinity ? 0 : Math.exp(x - m)));
+      const s = e.reduce((a, b) => a + b, 0);
+      return e.map((v) => v / s);
+    }
+    const dot = (a, b) => a.reduce((s, v, i) => s + v * b[i], 0);
+
+    function weightsFor(qi) {
+      const scores = pts.map((k, ki) => (masked && ki > qi ? -Infinity : dot(pts[qi], k) / Math.sqrt(D_MODEL)));
+      return softmax(scores);
+    }
+
+    function resize() {
+      const w = canvas.parentElement.clientWidth - 24;
+      W = Math.max(260, w);
+      H = Math.round(Math.min(360, W * 0.72));
+      ctx = Demo.hiDPI(canvas, W, H);
+      draw();
+    }
+
+    function draw() {
+      if (!ctx) return;
+      const c = (n) => Demo.color(n);
+      ctx.clearRect(0, 0, W, H);
+      // axes
+      ctx.strokeStyle = c("--border");
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, H / 2); ctx.lineTo(W, H / 2); ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H);
+      ctx.stroke();
+
+      const w = weightsFor(query);
+      const [qx, qy] = toPx(pts[query]);
+      // attention lines
+      pts.forEach((p, i) => {
+        if (w[i] < 1e-3) return;
+        const [x, y] = toPx(p);
+        ctx.strokeStyle = c("--accent");
+        ctx.globalAlpha = 0.25 + 0.75 * w[i];
+        ctx.lineWidth = 1 + 10 * w[i];
+        ctx.beginPath(); ctx.moveTo(qx, qy); ctx.lineTo(x, y); ctx.stroke();
+      });
+      ctx.globalAlpha = 1;
+      // output = weighted average of values (values = word vectors here)
+      const out = pts.reduce((acc, p, i) => [acc[0] + w[i] * p[0], acc[1] + w[i] * p[1]], [0, 0]);
+      const [ox, oy] = toPx(out), [cx, cy] = toPx([0, 0]);
+      ctx.strokeStyle = c("--accent-2"); ctx.fillStyle = c("--accent-2"); ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(ox, oy); ctx.stroke();
+      const ang = Math.atan2(oy - cy, ox - cx);
+      ctx.beginPath(); ctx.moveTo(ox, oy);
+      ctx.lineTo(ox - 11 * Math.cos(ang - 0.4), oy - 11 * Math.sin(ang - 0.4));
+      ctx.lineTo(ox - 11 * Math.cos(ang + 0.4), oy - 11 * Math.sin(ang + 0.4));
+      ctx.fill();
+      ctx.font = "12px system-ui"; ctx.fillText("output", ox + 8, oy - 8);
+      // words
+      pts.forEach((p, i) => {
+        const [x, y] = toPx(p);
+        const isQ = i === query;
+        ctx.beginPath();
+        ctx.arc(x, y, isQ ? 11 : 8, 0, Math.PI * 2);
+        ctx.fillStyle = isQ ? c("--accent") : c("--surface");
+        ctx.fill();
+        ctx.strokeStyle = isQ ? c("--accent") : c("--text");
+        ctx.lineWidth = 2; ctx.stroke();
+        ctx.fillStyle = c("--text");
+        ctx.font = `${isQ ? 600 : 500} 14px system-ui`;
+        ctx.fillText(WORDS[i], x + 13, y + 5);
+      });
+      renderSide(w);
+    }
+
+    function renderSide(w) {
+      document.getElementById("query-readout").textContent = `query: "${WORDS[query]}"`;
+      document.getElementById("bars").innerHTML = WORDS.map((word, i) => `
+        <div class="bar"><span>${word}</span>
+          <div class="track"><div class="fill" style="width:${(w[i] * 100).toFixed(1)}%"></div></div>
+          <span class="num">${w[i].toFixed(2)}</span></div>`).join("");
+      const m = document.getElementById("matrix");
+      m.style.gridTemplateColumns = `40px repeat(${WORDS.length}, 1fr)`;
+      const accent = Demo.color("--accent");
+      let html = `<div class="lbl"></div>` + WORDS.map((x) => `<div class="lbl">${x}</div>`).join("");
+      WORDS.forEach((rowWord, qi) => {
+        const row = weightsFor(qi);
+        html += `<div class="lbl">${rowWord}</div>` + row.map((v) =>
+          `<div style="background:color-mix(in srgb, ${accent} ${Math.round(v * 100)}%, var(--surface));color:${v > 0.55 ? "#fff" : "var(--muted)"}${qi === query ? ";outline:2px solid var(--accent)" : ""}">${v.toFixed(2)}</div>`).join("");
+      });
+      m.innerHTML = html;
+    }
+
+    function hit(px, py) {
+      let best = -1, bd = 22;
+      pts.forEach((p, i) => {
+        const [x, y] = toPx(p);
+        const d = Math.hypot(x - px, y - py);
+        if (d < bd) { bd = d; best = i; }
+      });
+      return best;
+    }
+    const local = (e) => { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+    canvas.addEventListener("pointerdown", (e) => {
+      const i = hit(...local(e));
+      if (i < 0) return;
+      dragging = i; moved = false;
+      canvas.setPointerCapture(e.pointerId);
+    });
+    canvas.addEventListener("pointermove", (e) => {
+      const [px, py] = local(e);
+      canvas.style.cursor = dragging >= 0 ? "grabbing" : hit(px, py) >= 0 ? "grab" : "";
+      if (dragging < 0) return;
+      const [x, y] = toPlane(px, py);
+      pts[dragging] = [Math.max(-2, Math.min(2, x)), Math.max(-2, Math.min(2, y))];
+      moved = true;
+      draw();
+    });
+    const end = () => {
+      if (dragging >= 0 && !moved) { query = dragging; draw(); }
+      dragging = -1;
+    };
+    canvas.addEventListener("pointerup", end);
+    canvas.addEventListener("pointercancel", end);
+
+    document.getElementById("mask-toggle").addEventListener("click", (e) => {
+      masked = !masked;
+      e.currentTarget.setAttribute("aria-pressed", String(masked));
+      draw();
+    });
+    document.getElementById("reset").addEventListener("click", () => { pts = START.map((p) => [...p]); draw(); });
+
+    // ---- panel 2: why scale by sqrt(d) ----
+    let seed = 7;
+    const rand = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 2 ** 32; };
+    const gauss = () => Math.sqrt(-2 * Math.log(1 - rand())) * Math.cos(2 * Math.PI * rand());
+    const N_KEYS = 12;
+    let base = null;
+    function sample() { base = { q: Array.from({ length: 1024 }, gauss), k: Array.from({ length: N_KEYS }, () => Array.from({ length: 1024 }, gauss)) }; }
+    sample();
+
+    function entropy(w) { return -w.reduce((s, p) => s + (p > 0 ? p * Math.log2(p) : 0), 0); }
+    function renderScaling() {
+      const d = 2 ** Number(document.getElementById("dim").value);
+      const q = base.q.slice(0, d);
+      const raw = base.k.map((k) => dot(q, k.slice(0, d)));
+      const un = softmax(raw), sc = softmax(raw.map((s) => s / Math.sqrt(d)));
+      document.getElementById("dim-readout").textContent = `d = ${d}`;
+      const bars = (w) => w.map((v) => `<span style="height:${Math.max(1, v * 100)}%" title="${v.toFixed(3)}"></span>`).join("");
+      document.getElementById("unscaled").innerHTML = bars(un);
+      document.getElementById("scaled").innerHTML = bars(sc);
+      const desc = (w) => `largest weight ${Math.max(...w).toFixed(2)} · entropy ${entropy(w).toFixed(2)} bits (max ${Math.log2(N_KEYS).toFixed(2)})`;
+      document.getElementById("unscaled-readout").textContent = desc(un);
+      document.getElementById("scaled-readout").textContent = desc(sc);
+    }
+    document.getElementById("dim").addEventListener("input", renderScaling);
+    document.getElementById("resample").addEventListener("click", () => { sample(); renderScaling(); });
+
+    addEventListener("resize", resize);
+    Demo.onTheme(() => { resize(); });
+    renderScaling();
+  </script>
+</body>
+</html>
