@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dropout · Paper → Playground</title>
+  <meta name="description" content="Train two identical nets on a few noisy points, one with dropout; watch random neurons switch off and the overfitting disappear.">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="../_shared/demo.css">
+  <script type="module" src="../_shared/demo.js"></script>
+  <style>
+    .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .pair h4 { margin: 0 0 4px; font-size: 13px; }
+    .pair canvas.bd { width: 100%; height: auto; aspect-ratio: 1; border-radius: 6px; background: var(--surface); }
+    .score { font-family: var(--mono); font-size: 12px; color: var(--muted); margin: 4px 0 0; font-variant-numeric: tabular-nums; }
+    .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .legend i { display: inline-block; width: 18px; height: 0; border-top: 3px solid; vertical-align: middle; margin-right: 5px; }
+  </style>
+</head>
+<body>
+  <header data-paper-header></header>
+  <main>
+    <section id="demo" aria-label="Interactive dropout demo">
+      <div class="demo-grid">
+        <div class="panel">
+          <h3>1 · Two identical networks, same 60 noisy training points</h3>
+          <div class="pair">
+            <div>
+              <h4 style="color:var(--bad)">No dropout</h4>
+              <canvas class="bd" id="bd-plain" aria-label="Decision regions of the network trained without dropout, with the training points (filled) and optionally held-out test points (rings)."></canvas>
+              <p class="score" id="score-plain"></p>
+            </div>
+            <div>
+              <h4 style="color:var(--good)">With dropout</h4>
+              <canvas class="bd" id="bd-drop" aria-label="Decision regions of the network trained with dropout, with the training points (filled) and optionally held-out test points (rings)."></canvas>
+              <p class="score" id="score-drop"></p>
+            </div>
+          </div>
+          <div class="controls">
+            <button class="btn primary" id="train" type="button">▶ Train</button>
+            <button class="btn" id="new-data" type="button">New noisy data</button>
+            <button class="btn" id="show-test" type="button" aria-pressed="false">Show test points</button>
+            <label>Drop rate p <input type="range" id="rate" min="0.1" max="0.8" step="0.05" value="0.5"></label>
+            <span class="readout" id="rate-readout"></span>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>Hidden units of the dropout net, this training step</h3>
+          <canvas id="units" aria-label="The 128 hidden units of the dropout network, drawn as two 8 by 8 grids, one per hidden layer. Filled dots are active this step; hollow dots were randomly dropped."></canvas>
+          <p class="score" id="units-readout"></p>
+          <h3 style="margin-top:12px">Loss: training (dashed) vs held-out test (solid)</h3>
+          <canvas id="curves" aria-label="Training and test loss over time for both networks. Without dropout the test loss climbs while training loss reaches zero."></canvas>
+          <div class="legend">
+            <span><i style="border-color:var(--bad)"></i>no dropout</span>
+            <span><i style="border-color:var(--good)"></i>dropout</span>
+            <span><i style="border-color:var(--muted);border-top-style:dashed"></i>train</span>
+            <span><i style="border-color:var(--muted)"></i>test</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="explainer">
+      <h2>The idea in 60 seconds</h2>
+      <p>A big neural network trained on a small dataset can <strong>memorise</strong> it: it bends
+        its decision boundary around every noisy point, gets the training data perfectly right and
+        then does worse on new data. That is overfitting.</p>
+      <p>Dropout's fix is simple. On every training step, <strong>each hidden unit is switched off
+        at random</strong> with probability p (the paper uses 0.5). The network has to make its
+        prediction with whichever random half of its units survived. On the next step, a different
+        half survives.</p>
+      <p>Because any unit might vanish, no unit can rely on a specific partner to fix up its
+        mistakes. The paper calls this preventing <strong>co-adaptation</strong>. Each unit has to
+        learn something that is useful on its own, and those features tend to be simpler and more
+        robust.</p>
+      <p>At test time nothing is dropped. Instead every unit's outgoing weights are scaled by
+        (1 − p), so the expected input to the next layer matches training. The paper shows this
+        cheaply approximates <strong>averaging the predictions of a huge ensemble</strong> of
+        "thinned" networks, all sharing weights, one for each pattern of dropped units.</p>
+      <div class="try">
+        <h3>Try this</h3>
+        <ul>
+          <li>Press <strong>Train</strong>. Some training points have the wrong colour on purpose. The no-dropout net reaches 100% training accuracy by bending its boundary into little islands around them. The dropout net mostly ignores them.</li>
+          <li>Watch the loss chart: the red dashed training loss dives to zero, while the red solid test loss turns around and climbs. That gap is overfitting. Green's gap stays much smaller.</li>
+          <li>Turn on <strong>Show test points</strong> to see 500 new points the nets never trained on, and compare the test accuracy under each map.</li>
+          <li>Drag the drop rate to 0.8 and retrain: too much dropout and the net underfits. Try 0.1: barely different from no dropout.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="simplifications">
+      <h2>How this demo simplifies the paper</h2>
+      <ul>
+        <li>The task is 60 2D points from two interleaved half-moons, with 15% of the labels flipped at random (so even a perfect model scores about 85% on test points), and a net with two hidden layers of 64 ReLU units. The paper tested on MNIST, TIMIT speech, CIFAR-10, ImageNet and Reuters text with much larger networks.</li>
+        <li>Only hidden units are dropped. The paper also dropped 20% of the input pixels, which makes little sense with only two input coordinates.</li>
+        <li>The paper combined dropout with a "max-norm" limit on each unit's incoming weights and a decaying learning rate. We use plain full-batch SGD with momentum and nothing else, so you see dropout's effect alone. Because of that, if you let training run long enough, the dropout net slowly starts to overfit too.</li>
+        <li>Both networks start from the same random weights and train live in your browser. The exact numbers change with every new dataset; the pattern (a smaller train/test gap with dropout) is what to look for, not the size of the gain.</li>
+        <li>The unit grid shows the dropout pattern for one training example. In the real algorithm, and in this demo's training, every example in every step gets its own random pattern.</li>
+      </ul>
+    </section>
+  </main>
+
+  <script type="module">
+    function rng(seed) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 2 ** 32; }; }
+    const gauss = (r) => Math.sqrt(-2 * Math.log(1 - r())) * Math.cos(2 * Math.PI * r());
+
+    // ---------- data: noisy two moons ----------
+    const NOISE = 0.12, FLIP = 0.15, N_TRAIN = 60, N_TEST = 500;
+    function moons(r, n) {
+      const X = new Float64Array(2 * n), Y = new Uint8Array(n);
+      for (let i = 0; i < n; i++) {
+        const cls = r() < 0.5 ? 1 : 0, t = Math.PI * r();
+        let x = cls ? 1 - Math.cos(t) : Math.cos(t), y = cls ? 0.4 - Math.sin(t) : Math.sin(t);
+        X[2 * i] = (x - 0.5) / 1.2 + NOISE * gauss(r);
+        X[2 * i + 1] = (y - 0.2) / 1.2 + NOISE * gauss(r);
+        Y[i] = r() < FLIP ? 1 - cls : cls; // ~15% of labels are wrong: outliers to tempt memorisation
+      }
+      return { X, Y, n };
+    }
+
+    // ---------- 2 -> H -> H -> 1 MLP with dropout on both hidden layers ----------
+    const H = 64;
+    class MLP {
+      constructor(seed, p) {
+        const r = rng(seed), g = (n, s) => Float64Array.from({ length: n }, () => gauss(r) * s);
+        this.p = p;
+        this.W1 = g(2 * H, 1); this.b1 = new Float64Array(H);
+        this.W2 = g(H * H, Math.sqrt(2 / H)); this.b2 = new Float64Array(H);
+        this.W3 = g(H, Math.sqrt(1 / H)); this.b3 = new Float64Array(1);
+        this.P = [this.W1, this.b1, this.W2, this.b2, this.W3, this.b3];
+        this.G = this.P.map((a) => new Float64Array(a.length));
+        this.V = this.P.map((a) => new Float64Array(a.length));
+        this.h1 = new Float64Array(H); this.h2 = new Float64Array(H);
+        this.m1 = new Uint8Array(H).fill(1); this.m2 = new Uint8Array(H).fill(1);
+        this.d1 = new Float64Array(H); this.d2 = new Float64Array(H);
+        this.hist = { train: [], test: [] };
+      }
+      // train=true: multiply by the random 0/1 masks. train=false: the paper's "mean network",
+      // every unit present, outputs scaled by (1 - p) (equivalent to scaling outgoing weights).
+      forward(x, y, train) {
+        const s = train ? 1 : 1 - this.p;
+        for (let i = 0; i < H; i++) {
+          const v = this.W1[2 * i] * x + this.W1[2 * i + 1] * y + this.b1[i];
+          this.h1[i] = (v > 0 ? v : 0) * (train ? this.m1[i] : s);
+        }
+        for (let i = 0; i < H; i++) {
+          let v = this.b2[i]; const o = i * H;
+          for (let j = 0; j < H; j++) v += this.W2[o + j] * this.h1[j];
+          this.h2[i] = (v > 0 ? v : 0) * (train ? this.m2[i] : s);
+        }
+        let o = this.b3[0];
+        for (let i = 0; i < H; i++) o += this.W3[i] * this.h2[i];
+        return o;
+      }
+      step(D, lr, mom, r) {
+        const [gW1, gb1, gW2, gb2, gW3, gb3] = this.G, d1 = this.d1, d2 = this.d2, n = D.n;
+        for (const g of this.G) g.fill(0);
+        for (let k = 0; k < n; k++) {
+          for (let i = 0; i < H; i++) { this.m1[i] = r() < this.p ? 0 : 1; this.m2[i] = r() < this.p ? 0 : 1; }
+          const x = D.X[2 * k], y = D.X[2 * k + 1], t = D.Y[k];
+          const o = this.forward(x, y, true), q = 1 / (1 + Math.exp(-o)), dO = (q - t) / n;
+          gb3[0] += dO;
+          for (let i = 0; i < H; i++) { gW3[i] += dO * this.h2[i]; d2[i] = this.h2[i] > 0 ? dO * this.W3[i] : 0; }
+          d1.fill(0);
+          for (let i = 0; i < H; i++) {
+            const d = d2[i]; if (!d) continue;
+            gb2[i] += d; const o2 = i * H;
+            for (let j = 0; j < H; j++) { gW2[o2 + j] += d * this.h1[j]; d1[j] += d * this.W2[o2 + j]; }
+          }
+          for (let i = 0; i < H; i++) {
+            const d = this.h1[i] > 0 ? d1[i] : 0; if (!d) continue;
+            gb1[i] += d; gW1[2 * i] += d * x; gW1[2 * i + 1] += d * y;
+          }
+        }
+        for (let k = 0; k < 6; k++) {
+          const P = this.P[k], G = this.G[k], V = this.V[k];
+          for (let i = 0; i < P.length; i++) { V[i] = mom * V[i] - lr * G[i]; P[i] += V[i]; }
+        }
+      }
+      evaluate(D) {
+        let L = 0, a = 0;
+        for (let k = 0; k < D.n; k++) {
+          const o = this.forward(D.X[2 * k], D.X[2 * k + 1], false), t = D.Y[k];
+          L += Math.log(1 + Math.exp(t ? -o : o)); a += (o > 0 ? 1 : 0) === t;
+        }
+        return [L / D.n, a / D.n];
+      }
+    }
+
+    // ---------- state ----------
+    const LR = 0.05, MOM = 0.9, MAX_STEPS = 3000, LOG_EVERY = 20, STEPS_PER_FRAME = 8;
+    let dataSeed = 1, rate = 0.5, train, test, nets, step = 0, running = false, rStep, showTest = false;
+    const trainBtn = document.getElementById("train");
+
+    function build(newData) {
+      if (newData || !train) { const r = rng(dataSeed * 7919); train = moons(r, N_TRAIN); test = moons(r, N_TEST); }
+      nets = { plain: new MLP(dataSeed, 0), drop: new MLP(dataSeed, rate) };
+      rStep = rng(dataSeed + 17);
+      step = 0;
+      log();
+      document.getElementById("rate-readout").textContent = `p = ${rate.toFixed(2)}`;
+      drawAll(true);
+    }
+    function log() {
+      for (const n of Object.values(nets)) {
+        const [lt, at] = n.evaluate(train), [ls, as] = n.evaluate(test);
+        n.hist.train.push(lt); n.hist.test.push(ls); n.acc = [at, as];
+      }
+    }
+
+    // ---------- drawing ----------
+    const c = (n) => Demo.color(n);
+    const bdP = document.getElementById("bd-plain"), bdD = document.getElementById("bd-drop");
+    const ucv = document.getElementById("units"), ccv = document.getElementById("curves");
+    let uctx, UW, UH, cctx, CW, CH;
+    const BD = 50, R = 1.4;
+
+    function resize() {
+      for (const el of [bdP, bdD]) { el.width = 250; el.height = 250; }
+      UW = Math.max(220, ucv.parentElement.clientWidth - 24); UH = 118;
+      uctx = Demo.hiDPI(ucv, UW, UH);
+      CW = Math.max(220, ccv.parentElement.clientWidth - 24); CH = Math.round(Math.min(190, CW * 0.5));
+      cctx = Demo.hiDPI(ccv, CW, CH);
+      drawAll(true);
+    }
+
+    function drawBoundary(el, net) {
+      const ctx = el.getContext("2d"), S = el.width, cell = S / BD;
+      const neg = c("--accent-2"), pos = c("--accent");
+      ctx.fillStyle = c("--surface"); ctx.fillRect(0, 0, S, S);
+      for (let gy = 0; gy < BD; gy++) for (let gx = 0; gx < BD; gx++) {
+        const x = -R + (2 * R * (gx + 0.5)) / BD, y = R - (2 * R * (gy + 0.5)) / BD;
+        const q = 1 / (1 + Math.exp(-net.forward(x, y, false)));
+        ctx.globalAlpha = 0.08 + Math.min(0.42, Math.abs(q - 0.5) * 0.9);
+        ctx.fillStyle = q > 0.5 ? pos : neg;
+        ctx.fillRect(gx * cell, gy * cell, cell, cell);
+      }
+      ctx.globalAlpha = 1;
+      const px = (v) => ((v + R) / (2 * R)) * S, py = (v) => ((R - v) / (2 * R)) * S;
+      if (showTest) {
+        ctx.lineWidth = 1;
+        for (let k = 0; k < test.n; k++) {
+          ctx.beginPath(); ctx.arc(px(test.X[2 * k]), py(test.X[2 * k + 1]), 2.2, 0, Math.PI * 2);
+          ctx.strokeStyle = test.Y[k] ? pos : neg; ctx.stroke();
+        }
+      }
+      for (let k = 0; k < train.n; k++) {
+        ctx.beginPath(); ctx.arc(px(train.X[2 * k]), py(train.X[2 * k + 1]), 4, 0, Math.PI * 2);
+        ctx.fillStyle = train.Y[k] ? pos : neg; ctx.fill();
+        ctx.strokeStyle = c("--text"); ctx.lineWidth = 1; ctx.stroke();
+      }
+    }
+
+    function drawUnits() {
+      const ctx = uctx, net = nets.drop; ctx.clearRect(0, 0, UW, UH);
+      const gridW = Math.min(UW / 2 - 24, UH - 22), cell = gridW / 8, r = Math.max(2.5, cell * 0.32);
+      let dropped = 0;
+      [net.m1, net.m2].forEach((mask, layer) => {
+        const ox = layer * (UW / 2) + (UW / 2 - gridW) / 2, oy = 18;
+        ctx.fillStyle = c("--muted"); ctx.font = "11px system-ui";
+        ctx.fillText(`hidden layer ${layer + 1}`, ox, 11);
+        for (let i = 0; i < H; i++) {
+          const on = !running && step === 0 ? true : mask[i] === 1;
+          if (!on) dropped++;
+          const x = ox + (i % 8 + 0.5) * cell, y = oy + (Math.floor(i / 8) + 0.5) * cell;
+          ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+          if (on) { ctx.fillStyle = c("--good"); ctx.fill(); }
+          else { ctx.strokeStyle = c("--border"); ctx.lineWidth = 1.5; ctx.stroke(); }
+        }
+      });
+      document.getElementById("units-readout").textContent = step === 0
+        ? "Press Train: each step, a random p of the units switch off (hollow)."
+        : `${dropped} of ${2 * H} units dropped this step (expected ${Math.round(2 * H * rate)}). At test time all are on, scaled by ${(1 - rate).toFixed(2)}.`;
+    }
+
+    function drawCurves() {
+      const ctx = cctx; ctx.clearRect(0, 0, CW, CH);
+      const padL = 30, padB = 16, padT = 6, w = CW - padL - 6, h = CH - padT - padB, yMax = 1.6;
+      ctx.strokeStyle = c("--border"); ctx.fillStyle = c("--muted"); ctx.font = "11px system-ui"; ctx.lineWidth = 1;
+      for (const v of [0, 0.5, 1, 1.5]) {
+        const y = padT + h * (1 - v / yMax);
+        ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + w, y); ctx.stroke();
+        ctx.fillText(v.toFixed(1), 4, y + 4);
+      }
+      ctx.fillText("training steps →", padL + w - 92, CH - 3);
+      const line = (hist, color, dashed) => {
+        ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.setLineDash(dashed ? [5, 4] : []); ctx.beginPath();
+        hist.forEach((v, i) => {
+          const x = padL + (i * LOG_EVERY / MAX_STEPS) * w, y = padT + h * (1 - Math.min(yMax, v) / yMax);
+          i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+        });
+        ctx.stroke(); ctx.setLineDash([]);
+      };
+      line(nets.plain.hist.train, c("--bad"), true);
+      line(nets.drop.hist.train, c("--good"), true);
+      line(nets.plain.hist.test, c("--bad"), false);
+      line(nets.drop.hist.test, c("--good"), false);
+    }
+
+    function drawScores() {
+      const fmt = (n) => {
+        const tr = n.hist.train.at(-1), te = n.hist.test.at(-1);
+        return `train acc ${(n.acc[0] * 100).toFixed(0)}% · test acc ${(n.acc[1] * 100).toFixed(0)}%\nloss train ${tr.toFixed(2)} · test ${te.toFixed(2)}`;
+      };
+      document.getElementById("score-plain").innerText = fmt(nets.plain);
+      document.getElementById("score-drop").innerText = fmt(nets.drop);
+    }
+
+    let frame = 0;
+    function drawAll(full) {
+      if (!cctx || !nets) return;
+      drawUnits(); drawCurves(); drawScores();
+      if (full || frame % 5 === 0) { drawBoundary(bdP, nets.plain); drawBoundary(bdD, nets.drop); }
+    }
+
+    // ---------- training loop ----------
+    function tick() {
+      if (!running) return;
+      const t0 = performance.now();
+      for (let k = 0; k < STEPS_PER_FRAME && performance.now() - t0 < 14 && step < MAX_STEPS; k++) {
+        nets.plain.step(train, LR, MOM, rStep);
+        nets.drop.step(train, LR, MOM, rStep);
+        step++;
+        if (step % LOG_EVERY === 0) log();
+      }
+      frame++;
+      drawAll(step >= MAX_STEPS);
+      if (step >= MAX_STEPS) { setRunning(false); return; }
+      requestAnimationFrame(tick);
+    }
+    function setRunning(on) {
+      running = on;
+      trainBtn.textContent = on ? "❚❚ Pause" : step >= MAX_STEPS ? "Done · ▶ again" : "▶ Train";
+      if (on) requestAnimationFrame(tick);
+    }
+    trainBtn.addEventListener("click", () => {
+      if (!running && step >= MAX_STEPS) build(false);
+      setRunning(!running);
+    });
+    document.getElementById("new-data").addEventListener("click", () => { dataSeed++; build(true); });
+    document.getElementById("show-test").addEventListener("click", (e) => {
+      showTest = !showTest; e.currentTarget.setAttribute("aria-pressed", String(showTest)); drawAll(true);
+    });
+    const rateEl = document.getElementById("rate");
+    rateEl.addEventListener("input", () => { rate = Number(rateEl.value); build(false); });
+
+    addEventListener("resize", resize);
+    build(true);
+    Demo.onTheme(resize);
+  </script>
+</body>
+</html>

@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Deep Residual Learning for Image Recognition · Paper → Playground</title>
+  <meta name="description" content="Train a deep plain net and the same net with skip connections side by side, and watch only one of them learn.">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="../_shared/demo.css">
+  <script type="module" src="../_shared/demo.js"></script>
+  <style>
+    .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--muted); margin-top: 6px; }
+    .legend i { display: inline-block; width: 18px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }
+    .boundaries { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .boundaries h4 { margin: 0 0 4px; font-size: 13px; }
+    .boundaries canvas { width: 100%; height: auto; aspect-ratio: 1; border-radius: 6px; background: var(--surface); }
+    .blocks { font-family: var(--mono); font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+  </style>
+</head>
+<body>
+  <header data-paper-header></header>
+  <main>
+    <section id="demo" aria-label="Interactive residual network demo">
+      <div class="demo-grid">
+        <div class="panel">
+          <h3>1 · Same depth, same width: one has skip connections</h3>
+          <canvas id="curves" aria-label="Training loss over time for three networks: a deep plain network, the same deep network with residual skip connections, and a shallow 4-layer plain network as a reference."></canvas>
+          <div class="legend">
+            <span><i style="background:var(--bad)"></i><span id="lg-plain">plain</span></span>
+            <span><i style="background:var(--good)"></i><span id="lg-res">residual</span></span>
+            <span><i style="background:var(--muted)"></i>shallow plain (4 layers), for reference</span>
+          </div>
+          <div class="controls">
+            <button class="btn primary" id="train" type="button">▶ Train</button>
+            <button class="btn" id="reset" type="button">New random init</button>
+            <label>Hidden layers <input type="range" id="depth" min="4" max="40" step="2" value="30"></label>
+            <span class="readout" id="depth-readout"></span>
+          </div>
+          <p class="readout" id="status" style="margin:8px 0 0"></p>
+        </div>
+        <div class="panel">
+          <h3>What each network has learned (two-spiral task)</h3>
+          <div class="boundaries">
+            <div>
+              <h4 style="color:var(--bad)">Plain</h4>
+              <canvas id="bd-plain" aria-label="Decision regions of the plain network over the two-spiral data."></canvas>
+            </div>
+            <div>
+              <h4 style="color:var(--good)">Residual</h4>
+              <canvas id="bd-res" aria-label="Decision regions of the residual network over the two-spiral data."></canvas>
+            </div>
+          </div>
+          <h3 style="margin-top:14px">Gradient size per layer, input → output (log scale)</h3>
+          <canvas id="grads" aria-label="Bar chart of the gradient norm of each layer's weights, for the plain network on top and the residual network below, on a log scale."></canvas>
+          <p class="blocks" id="grad-readout"></p>
+        </div>
+      </div>
+    </section>
+
+    <section id="explainer">
+      <h2>The idea in 60 seconds</h2>
+      <p>You would expect a deeper network to be at least as good as a shallower one: the extra
+        layers could simply learn to pass their input through unchanged. In practice, the paper found
+        the opposite. Stacking more plain layers made the <strong>training</strong> error go
+        <em>up</em>, not just the test error. That rules out overfitting. The deep network is
+        simply harder to optimise. The paper calls this the <strong>degradation problem</strong>.</p>
+      <p>The fix is a tiny change in wiring. Every pair of layers computes a correction
+        <code>F(x)</code> and adds it back to its own input, so the block outputs
+        <code>F(x) + x</code>. That added <code>x</code> is the <strong>skip connection</strong>
+        (or shortcut). It costs no extra parameters.</p>
+      <p>Now "do nothing" is the easy default: if <code>F</code>'s weights are near zero, the block
+        is an identity. Each block only has to learn a small <em>residual</em> on top of what
+        earlier layers already did. The shortcuts also give the error signal a direct path back
+        to the early layers during training, so every layer keeps getting useful updates.</p>
+      <p>With this change, the paper trained networks of 152 layers (and over 1,000 in an
+        experiment) where deeper finally meant better. ResNets won ImageNet 2015, and the same
+        <code>x + F(x)</code> pattern is now in nearly every deep model, Transformers included.</p>
+      <div class="try">
+        <h3>Try this</h3>
+        <ul>
+          <li>Press <strong>Train</strong> at 30 hidden layers. The green residual curve drops and its spiral fills in, while the red plain net barely moves off 0.69 (a coin flip).</li>
+          <li>Compare red with the grey 4-layer net: the deep plain net does <em>worse</em> than a much shallower one, even on its own training data. That gap is the degradation problem.</li>
+          <li>Slide hidden layers down to 4 and train again: plain and residual now learn about equally well. Skip connections matter most when the net is deep.</li>
+          <li>Watch the gradient bars. In the deep plain net, the bars near the input are tiny or empty (zero), so those layers can't learn. The residual net keeps them alive.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="simplifications">
+      <h2>How this demo simplifies the paper</h2>
+      <ul>
+        <li>The networks are tiny fully connected nets (12 units per layer) classifying 300 points on a 2D two-spiral task. The paper used convolutional nets of 18 to 152 layers on ImageNet and CIFAR-10 images.</li>
+        <li>No batch normalisation. The paper used batch norm after every convolution and argued that its plain nets did <em>not</em> have vanishing gradients, yet still trained badly. In this toy, without batch norm, the deep plain net's gradients really do shrink or die (its ReLUs switch off). The symptom is the same, higher training loss with more depth, but the mechanism here is simpler than the one the paper describes.</li>
+        <li>To keep the residual net stable without batch norm, the second layer of each residual block starts with weights 10× smaller than normal, and all three nets clip the gradient norm to 1. These are common modern tricks, not part of the original paper.</li>
+        <li>Training is plain SGD with momentum on minibatches of 32 for a few thousand steps, live in your browser. The curves show this toy's loss, not the paper's results. Different random inits (try <em>New random init</em>) give somewhat different curves, and occasionally a residual run gets stuck too.</li>
+        <li>Each residual block has two layers and an identity shortcut, as in the paper's basic block. We skip projection shortcuts, downsampling and the bottleneck design.</li>
+      </ul>
+    </section>
+  </main>
+
+  <script type="module">
+    // ---------- tiny seeded RNG ----------
+    function rng(seed) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 2 ** 32; }; }
+    const gauss = (r) => Math.sqrt(-2 * Math.log(1 - r())) * Math.cos(2 * Math.PI * r());
+
+    // ---------- data: two interleaved spirals ----------
+    function makeSpirals(n, seed) {
+      const r = rng(seed), X = new Float64Array(2 * n), Y = new Uint8Array(n);
+      for (let i = 0; i < n; i++) {
+        const c = i % 2, t = 0.15 + 0.85 * Math.sqrt(r()), a = t * 2 * Math.PI * 1.75 + c * Math.PI;
+        X[2 * i] = t * Math.cos(a) + 0.04 * gauss(r);
+        X[2 * i + 1] = t * Math.sin(a) + 0.04 * gauss(r);
+        Y[i] = c;
+      }
+      return { X, Y, n };
+    }
+    const DATA = makeSpirals(300, 3);
+
+    // ---------- MLP with optional residual blocks, hand-written backprop ----------
+    // stem: 2 -> W (ReLU). Then L hidden layers W -> W.
+    // plain:    h = relu(A h + b) for every layer
+    // residual: blocks of two layers, u = relu(A1 h + b1); h = relu(A2 u + b2 + h)  (paper's basic block)
+    const WIDTH = 12, RES_INIT = 0.1;
+    class Net {
+      constructor(L, residual, seed) {
+        this.L = L; this.res = residual; const W = WIDTH, r = rng(seed);
+        this.P = [];
+        const add = (n, s) => { const a = new Float64Array(n); for (let i = 0; i < n; i++) a[i] = gauss(r) * s; this.P.push(a); return a; };
+        this.Win = add(2 * W, 1); this.bin = add(W, 0);
+        this.Ws = []; this.bs = [];
+        for (let l = 0; l < L; l++) {
+          this.Ws.push(add(W * W, Math.sqrt(2 / W) * (residual && l % 2 === 1 ? RES_INIT : 1)));
+          this.bs.push(add(W, 0));
+        }
+        this.Wo = add(W, Math.sqrt(1 / W)); this.bo = add(1, 0);
+        this.G = this.P.map((p) => new Float64Array(p.length));
+        this.V = this.P.map((p) => new Float64Array(p.length));
+        this.h = Array.from({ length: L + 1 }, () => new Float64Array(W));
+        this.z = Array.from({ length: L }, () => new Float64Array(W));
+        this.dA = new Float64Array(W); this.dB = new Float64Array(W); this.dsk = new Float64Array(W);
+        this.gradNorm = new Float64Array(L); this.gradEma = new Float64Array(L).fill(NaN);
+        this.lossEma = Math.log(2); this.history = [];
+      }
+      forward(x0, x1) {
+        const W = WIDTH, L = this.L, h0 = this.h[0];
+        for (let i = 0; i < W; i++) { const v = this.Win[2 * i] * x0 + this.Win[2 * i + 1] * x1 + this.bin[i]; h0[i] = v > 0 ? v : 0; }
+        for (let l = 0; l < L; l++) {
+          const A = this.Ws[l], b = this.bs[l], hp = this.h[l], z = this.z[l], hn = this.h[l + 1];
+          const skip = this.res && l % 2 === 1 ? this.h[l - 1] : null;
+          for (let i = 0; i < W; i++) {
+            let s = b[i]; const o = i * W;
+            for (let j = 0; j < W; j++) s += A[o + j] * hp[j];
+            if (skip) s += skip[i];
+            z[i] = s; hn[i] = s > 0 ? s : 0;
+          }
+        }
+        let o = this.bo[0]; const hL = this.h[L];
+        for (let i = 0; i < W; i++) o += this.Wo[i] * hL[i];
+        return o;
+      }
+      step(batch, lr, mom, clip, r) {
+        const W = WIDTH, L = this.L, G = this.G;
+        for (const g of G) g.fill(0);
+        const gWin = G[0], gbin = G[1], gWo = G[2 + 2 * L], gbo = G[3 + 2 * L];
+        let loss = 0;
+        for (let b = 0; b < batch; b++) {
+          const n = (r() * DATA.n) | 0, x0 = DATA.X[2 * n], x1 = DATA.X[2 * n + 1], y = DATA.Y[n];
+          const o = this.forward(x0, x1), p = 1 / (1 + Math.exp(-o));
+          loss += Math.log(1 + Math.exp(y ? -o : o));
+          const dO = (p - y) / batch;
+          gbo[0] += dO;
+          let dh = this.dA, dhp = this.dB; const hL = this.h[L], dsk = this.dsk;
+          for (let i = 0; i < W; i++) { gWo[i] += dO * hL[i]; dh[i] = dO * this.Wo[i]; }
+          for (let l = L - 1; l >= 0; l--) {
+            const z = this.z[l], A = this.Ws[l], gA = G[2 + 2 * l], gb = G[3 + 2 * l], hp = this.h[l];
+            dhp.fill(0);
+            if (this.res && l % 2 === 1) for (let i = 0; i < W; i++) dsk[i] = z[i] > 0 ? dh[i] : 0; // gradient through the shortcut
+            for (let i = 0; i < W; i++) {
+              const d = z[i] > 0 ? dh[i] : 0; if (d === 0) continue;
+              gb[i] += d; const o2 = i * W;
+              for (let j = 0; j < W; j++) { gA[o2 + j] += d * hp[j]; dhp[j] += A[o2 + j] * d; }
+            }
+            if (this.res && l % 2 === 0) for (let j = 0; j < W; j++) dhp[j] += dsk[j];
+            const t = dh; dh = dhp; dhp = t;
+          }
+          const h0 = this.h[0];
+          for (let i = 0; i < W; i++) { const d = h0[i] > 0 ? dh[i] : 0; gbin[i] += d; gWin[2 * i] += d * x0; gWin[2 * i + 1] += d * x1; }
+        }
+        let tot = 0;
+        for (const g of G) for (let i = 0; i < g.length; i++) tot += g[i] * g[i];
+        tot = Math.sqrt(tot);
+        const sc = tot > clip ? clip / tot : 1;
+        for (let l = 0; l < L; l++) {
+          const g = G[2 + 2 * l]; let s = 0;
+          for (let i = 0; i < g.length; i++) s += g[i] * g[i];
+          this.gradNorm[l] = Math.sqrt(s);
+          const lg = Math.log10(this.gradNorm[l] + 1e-12);
+          this.gradEma[l] = Number.isNaN(this.gradEma[l]) ? lg : 0.9 * this.gradEma[l] + 0.1 * lg;
+        }
+        for (let k = 0; k < this.P.length; k++) {
+          const p = this.P[k], g = G[k], v = this.V[k];
+          for (let i = 0; i < p.length; i++) { v[i] = mom * v[i] - lr * sc * g[i]; p[i] += v[i]; }
+        }
+        loss /= batch;
+        if (Number.isFinite(loss)) this.lossEma = 0.95 * this.lossEma + 0.05 * loss;
+        return loss;
+      }
+      fullLoss() {
+        let l = 0;
+        for (let n = 0; n < DATA.n; n++) { const o = this.forward(DATA.X[2 * n], DATA.X[2 * n + 1]); l += Math.log(1 + Math.exp(DATA.Y[n] ? -o : o)); }
+        return l / DATA.n;
+      }
+      accuracy() {
+        let a = 0;
+        for (let n = 0; n < DATA.n; n++) a += (this.forward(DATA.X[2 * n], DATA.X[2 * n + 1]) > 0 ? 1 : 0) === DATA.Y[n];
+        return a / DATA.n;
+      }
+    }
+
+    // ---------- state ----------
+    const LR = 0.05, MOM = 0.9, CLIP = 1, BATCH = 32, MAX_STEPS = 4000, LOG_EVERY = 25, STEPS_PER_FRAME = 12;
+    let depth = 30, seed = 1, nets = null, step = 0, running = false, rngBatch = null;
+    const depthEl = document.getElementById("depth"), trainBtn = document.getElementById("train");
+
+    function build() {
+      nets = { plain: new Net(depth, false, seed), res: new Net(depth, true, seed), shallow: new Net(4, false, seed) };
+      for (const n of Object.values(nets)) n.history.push(n.fullLoss());
+      rngBatch = rng(seed * 31 + depth);
+      step = 0;
+      document.getElementById("depth-readout").textContent = `${depth} layers (${depth / 2} residual blocks)`;
+      document.getElementById("lg-plain").textContent = `plain, ${depth} layers`;
+      document.getElementById("lg-res").textContent = `residual, ${depth} layers`;
+      drawAll(true);
+    }
+
+    // ---------- drawing ----------
+    const cv = document.getElementById("curves"), gcv = document.getElementById("grads");
+    const bdP = document.getElementById("bd-plain"), bdR = document.getElementById("bd-res");
+    let cctx, CW = 0, CH = 0, gctx, GW = 0, GH = 0;
+    const BD = 44; // decision-boundary grid resolution
+    const c = (n) => Demo.color(n);
+
+    function resize() {
+      CW = Math.max(260, cv.parentElement.clientWidth - 24);
+      CH = Math.round(Math.min(320, CW * 0.62));
+      cctx = Demo.hiDPI(cv, CW, CH);
+      GW = Math.max(200, gcv.parentElement.clientWidth - 24);
+      GH = 120;
+      gctx = Demo.hiDPI(gcv, GW, GH);
+      for (const el of [bdP, bdR]) { el.width = 220; el.height = 220; }
+      drawAll(true);
+    }
+
+    function drawCurves() {
+      const ctx = cctx; ctx.clearRect(0, 0, CW, CH);
+      const padL = 34, padB = 22, padT = 8, padR = 8, w = CW - padL - padR, h = CH - padT - padB, yMax = 0.8;
+      ctx.strokeStyle = c("--border"); ctx.lineWidth = 1; ctx.fillStyle = c("--muted"); ctx.font = "11px system-ui";
+      for (const v of [0, 0.2, 0.4, 0.6]) {
+        const y = padT + h * (1 - v / yMax);
+        ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + w, y); ctx.stroke();
+        ctx.fillText(v.toFixed(1), 6, y + 4);
+      }
+      // chance level
+      const yc = padT + h * (1 - Math.log(2) / yMax);
+      ctx.setLineDash([4, 4]); ctx.beginPath(); ctx.moveTo(padL, yc); ctx.lineTo(padL + w, yc); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillText("coin flip (0.69)", padL + 4, yc - 4);
+      ctx.fillText("training steps →", padL + w - 92, CH - 6);
+      const line = (hist, color, width) => {
+        ctx.strokeStyle = color; ctx.lineWidth = width; ctx.beginPath();
+        hist.forEach((v, i) => {
+          const x = padL + (i * LOG_EVERY / MAX_STEPS) * w, y = padT + h * (1 - Math.min(yMax, v) / yMax);
+          i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+        });
+        ctx.stroke();
+      };
+      line(nets.shallow.history, c("--muted"), 1.5);
+      line(nets.plain.history, c("--bad"), 2.5);
+      line(nets.res.history, c("--good"), 2.5);
+    }
+
+    function drawBoundary(el, net) {
+      const ctx = el.getContext("2d"), S = el.width, cell = S / BD;
+      const neg = c("--accent-2"), pos = c("--accent"), surf = c("--surface");
+      ctx.fillStyle = surf; ctx.fillRect(0, 0, S, S);
+      const R = 1.15;
+      for (let gy = 0; gy < BD; gy++) for (let gx = 0; gx < BD; gx++) {
+        const x = -R + (2 * R * (gx + 0.5)) / BD, y = R - (2 * R * (gy + 0.5)) / BD;
+        const p = 1 / (1 + Math.exp(-net.forward(x, y)));
+        ctx.globalAlpha = Math.min(0.55, Math.abs(p - 0.5) * 1.3);
+        ctx.fillStyle = p > 0.5 ? pos : neg;
+        ctx.fillRect(gx * cell, gy * cell, cell, cell);
+      }
+      ctx.globalAlpha = 1;
+      for (let n = 0; n < DATA.n; n++) {
+        const px = ((DATA.X[2 * n] + R) / (2 * R)) * S, py = ((R - DATA.X[2 * n + 1]) / (2 * R)) * S;
+        ctx.beginPath(); ctx.arc(px, py, 2.2, 0, Math.PI * 2);
+        ctx.fillStyle = DATA.Y[n] ? pos : neg; ctx.fill();
+      }
+    }
+
+    function drawGrads() {
+      const ctx = gctx; ctx.clearRect(0, 0, GW, GH);
+      const rows = [["plain", nets.plain, c("--bad")], ["residual", nets.res, c("--good")]];
+      const lo = -7, hi = 0, rowH = (GH - 16) / 2, padL = 58;
+      ctx.font = "11px system-ui";
+      rows.forEach(([name, net, color], k) => {
+        const top = k * rowH + 4, bw = (GW - padL - 4) / net.L;
+        ctx.fillStyle = c("--muted"); ctx.fillText(name, 2, top + rowH / 2 + 4);
+        ctx.fillStyle = c("--surface"); ctx.fillRect(padL, top, GW - padL - 4, rowH - 4);
+        for (let l = 0; l < net.L; l++) {
+          const v = net.gradEma[l];
+          if (Number.isNaN(v)) continue;
+          const f = Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
+          ctx.fillStyle = color;
+          ctx.fillRect(padL + l * bw + 0.5, top + (rowH - 4) * (1 - f), Math.max(1, bw - 1), (rowH - 4) * f);
+        }
+      });
+      ctx.fillStyle = c("--muted");
+      ctx.fillText("input side", padL, GH - 2);
+      ctx.fillText("output side", GW - 64, GH - 2);
+      const fmt = (net) => {
+        const first = net.gradNorm[0], last = net.gradNorm[net.L - 1];
+        return step ? `${first === 0 ? "0" : first.toExponential(0)} → ${last === 0 ? "0" : last.toExponential(0)}` : "–";
+      };
+      document.getElementById("grad-readout").textContent =
+        `‖∇W‖ first → last layer · plain ${fmt(nets.plain)} · residual ${fmt(nets.res)} · bars span 1e-7 to 1`;
+    }
+
+    function drawStatus() {
+      const last = (n) => n.history[n.history.length - 1].toFixed(3);
+      document.getElementById("status").textContent =
+        `step ${step}/${MAX_STEPS} · loss: plain ${last(nets.plain)} · residual ${last(nets.res)} · shallow ${last(nets.shallow)}`;
+    }
+
+    let frame = 0;
+    function drawAll(full) {
+      if (!cctx || !nets) return;
+      drawCurves(); drawGrads(); drawStatus();
+      if (full || frame % 6 === 0) { drawBoundary(bdP, nets.plain); drawBoundary(bdR, nets.res); }
+    }
+
+    // ---------- training loop: small batches of steps per animation frame ----------
+    function tick() {
+      if (!running) return;
+      const t0 = performance.now();
+      for (let k = 0; k < STEPS_PER_FRAME && performance.now() - t0 < 14 && step < MAX_STEPS; k++) {
+        for (const n of Object.values(nets)) n.step(BATCH, LR, MOM, CLIP, rngBatch);
+        step++;
+        if (step % LOG_EVERY === 0) for (const n of Object.values(nets)) n.history.push(n.fullLoss());
+      }
+      frame++;
+      drawAll(step >= MAX_STEPS);
+      if (step >= MAX_STEPS) { setRunning(false); return; }
+      requestAnimationFrame(tick);
+    }
+    function setRunning(on) {
+      running = on;
+      trainBtn.textContent = on ? "❚❚ Pause" : step >= MAX_STEPS ? "Done · ▶ again" : "▶ Train";
+      if (on) requestAnimationFrame(tick);
+    }
+    trainBtn.addEventListener("click", () => {
+      if (!running && step >= MAX_STEPS) build();
+      setRunning(!running);
+    });
+    document.getElementById("reset").addEventListener("click", () => { seed++; build(); });
+    depthEl.addEventListener("input", () => { depth = Number(depthEl.value); build(); });
+
+    addEventListener("resize", resize);
+    build();
+    Demo.onTheme(resize);
+  </script>
+</body>
+</html>
